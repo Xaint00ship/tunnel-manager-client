@@ -76,6 +76,7 @@ uninstall.cleanup
 | `helper_version_mismatch` | error | `startup.helper_verify` | Системный компонент устарел | Обновить компонент |
 | `os_permission_denied` | critical | `connect.helper_install`, `connect.tunnel_start` | Система не разрешила настроить соединение | Открыть настройки системы |
 | `os_policy_blocked` | critical | `connect.tunnel_start` | Настройки системы или организации запрещают это подключение | Обратиться к администратору устройства |
+| `conflicting_network_software` | error | `connect.tunnel_start`, `connect.fail_closed_enable` | Другая программа управляет сетевыми настройками и мешает подключению | Отключить другой VPN или добавить исключение |
 | `token_revoked` | critical | `auth.refresh` | Доступ к приложению отозван | Активировать заново |
 | `subscription_expired` | error | `profile.fetch` | Подписка истекла | Продлить подписку |
 | `route_list_signature_invalid` | critical | `runtime.route_sync` | Не удалось проверить подлинность настроек | Автоматический повтор |
@@ -194,8 +195,10 @@ Redaction работает в два слоя.
 | строки вида `key=`, `token=`, `password=`, `secret=` | `<redacted>` |
 | base64-подобные последовательности длиннее 40 символов | `<redacted>` |
 | JWT-подобные строки | `<redacted>` |
-| пути внутри домашнего каталога | `~/<path>` |
+| пути внутри домашнего каталога (`/Users/<имя>/…`, `C:\Users\<имя>\…`) | `~/<path>` |
 | имя пользователя ОС | `<user>` |
+| буквы дисков и UNC-пути Windows | `<path>` |
+| GUID сетевых интерфейсов Windows | `<iface>` |
 
 `SEC-050` (MUST). Длина `diagnostics.message` ограничена 500 символами, `lastSteps` - 10 элементами из фиксированного словаря шагов.
 
@@ -254,7 +257,7 @@ Redaction работает в два слоя.
 
 `T-030` (MUST). Для каждой категории раздела 4.1 существует тест, который воспроизводит условие и проверяет, что отчет сформирован с правильными `category`, `severity`, `stage` и `fingerprint`.
 
-`T-031` (MUST). Тест redaction подает во все текстовые поля строку, содержащую токен, private key, IP, hostname endpoint и домашний путь, и проверяет, что итоговый JSON не содержит ни одного из них.
+`T-031` (MUST). Тест redaction подает во все текстовые поля строку, содержащую токен, private key, IP, hostname endpoint и домашний путь, и проверяет, что итоговый JSON не содержит ни одного из них. Тест выполняется дважды: с путями в стиле macOS (`/Users/имя/…`) и Windows (`C:\Users\имя\…`).
 
 `T-032` (MUST). Тест rate limit проверяет, что 10 одинаковых ошибок подряд дают один отчет с `occurrences: 10`.
 

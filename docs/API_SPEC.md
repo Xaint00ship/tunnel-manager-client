@@ -19,7 +19,7 @@
 | --- | --- | --- |
 | `Authorization` | `Bearer <access_token>` | для всех запросов, кроме `activate` |
 | `X-Client-Version` | `1.4.2` | версия приложения |
-| `X-Client-Platform` | `macos-arm64` | платформа сборки |
+| `X-Client-Platform` | `macos-arm64` | платформа сборки: `macos-arm64`, `windows-x64`, позже `windows-arm64`, `android-arm64` |
 | `X-Device-Id` | `dev_9f3a...` | идентификатор устройства |
 | `X-Request-Id` | UUID v4 | корреляция запроса в логах |
 | `Idempotency-Key` | UUID v4 | для всех `POST` |

@@ -18,7 +18,7 @@
 
 - стек утвержден;
 - MVP scope утвержден;
-- первая платформа подтверждена как macOS Apple Silicon.
+- платформы MVP подтверждены: macOS Apple Silicon и Windows 10/11 x64, обе выходят одним релизом.
 
 ## Phase 1: оболочка приложения
 
@@ -30,15 +30,15 @@
 - React + TypeScript frontend;
 - package manager и workspace structure;
 - linting/formatting;
-- basic CI;
+- CI с двумя раннерами: macOS и Windows;
 - окно приложения с простым пользовательским status screen;
 - выключенный по умолчанию placeholder для "Режима эксперта";
-- команды для локальной разработки.
+- команды для локальной разработки на обеих ОС.
 
 Критерии завершения:
 
-- приложение запускается локально на macOS Apple Silicon;
-- CI проходит TypeScript checks и basic build.
+- приложение запускается локально на macOS Apple Silicon и на Windows 10/11;
+- CI проходит TypeScript checks и basic build на обоих раннерах.
 
 ## Phase 2: Core TypeScript логика
 
@@ -63,24 +63,40 @@
 - обычный UI не показывает техническую диагностику без режима эксперта;
 - unit tests покрывают core route logic.
 
-## Phase 3: macOS Tunnel Control MVP
+## Phase 3: Tunnel Control MVP на macOS и Windows
 
-Цель: сделать приложение реально полезным на macOS.
+Цель: сделать приложение реально полезным на обеих desktop-платформах.
 
-Результаты:
+Обе платформы делаются параллельно против одного контракта `NativeAdapter` из раздела 13.2 ТЗ. Первым делается сам контракт и fake-адаптер, чтобы платформенные команды не блокировали друг друга.
 
-- macOS native adapter skeleton;
-- secure storage через Keychain;
+Общие результаты:
+
+- зафиксированный контракт native adapter и fake-адаптер для тестов;
 - tunnel profile connect/disconnect;
-- status detection;
+- status detection и определение active tunnel interface;
 - basic route apply/remove;
-- admin permission flow там, где нужны повышенные права.
+- permission flow там, где нужны повышенные права;
+- общий набор интеграционных тестов, который гоняется на обеих ОС.
+
+macOS:
+
+- native adapter;
+- privileged helper;
+- secure storage через Keychain.
+
+Windows:
+
+- native adapter;
+- helper в виде Windows-службы, named pipe с ACL и проверкой вызывающего;
+- secure storage через Credential Manager или DPAPI;
+- сертификат code signing получен и проверен на тестовой сборке.
 
 Критерии завершения:
 
-- пользователь может подключаться и отключаться из приложения;
-- приложение умеет определять active tunnel interface;
-- protected routes применяются при подключении.
+- на каждой платформе пользователь может подключаться и отключаться из приложения;
+- на каждой платформе приложение определяет active tunnel interface;
+- protected routes применяются при подключении на обеих платформах;
+- расхождения между платформами сведены к таблице 19.4 ТЗ.
 
 ## Phase 4: Watchdog и Fail-Closed
 
@@ -90,7 +106,8 @@
 
 - route drift watchdog;
 - route repair;
-- fail-closed policy;
+- fail-closed policy: packet filter на macOS, WFP или firewall на Windows;
+- явное управление метриками маршрутов на Windows;
 - автоматическая отправка важных ошибок подключения через backend;
 - ручная кнопка отправки ошибки админам;
 - дедупликация и rate-limit error reports;
@@ -102,32 +119,45 @@
 
 Критерии завершения:
 
-- route drift чинится автоматически;
-- protected destinations не утекают при падении tunnel;
+- route drift чинится автоматически на обеих платформах;
+- protected destinations не утекают при падении tunnel: leak-тесты L1-L8 пройдены и на macOS, и на Windows;
+- на Windows приложение корректно уживается с включенным Windows Firewall и сторонним VPN-клиентом;
 - важные ошибки подключения попадают админам без чувствительных данных;
 - пользователь может одной кнопкой отправить ошибку, если она не отправилась автоматически;
 - локальные пользовательские whitelist-правила применяются только на устройстве пользователя;
 - приложение восстанавливается после sleep/wake без ручной чистки маршрутов.
 
-## Phase 5: Packaging и Distribution для macOS
+## Phase 5: Packaging и Distribution
 
-Цель: подготовить тестируемый macOS build.
+Цель: подготовить тестируемые build для macOS и Windows из одного релизного пайплайна.
 
-Результаты:
+Общие результаты:
+
+- сборка обеих платформ из CI по одному тегу с одинаковой версией;
+- app icon;
+- versioning;
+- решение по updater, единое для обеих платформ;
+- install/uninstall cleanup checks.
+
+macOS:
 
 - Apple Silicon build artifact;
 - DMG packaging;
-- app icon;
-- versioning;
-- updater decision;
-- signing/notarization plan;
-- install/uninstall cleanup checks.
+- signing и notarization.
+
+Windows:
+
+- x64 build artifact;
+- установщик MSI или NSIS;
+- подпись установщика и исполняемых файлов, проверка прохождения SmartScreen;
+- корректная установка и удаление службы helper.
 
 Критерии завершения:
 
-- tester может установить приложение из DMG;
-- приложение запускается после перезагрузки, если включен autostart;
-- uninstall удаляет helper/routes/config без сломанной сети.
+- tester может установить приложение из DMG на macOS и из установщика на Windows;
+- приложение запускается после перезагрузки на обеих платформах, если включен autostart;
+- uninstall удаляет helper/службу, routes и config без сломанной сети на обеих платформах;
+- релиз содержит оба артефакта; выпуск с одним артефактом не публикуется.
 
 ## Phase 6: усиление Backend API
 
@@ -153,26 +183,18 @@
 - админы получают только важные ошибки подключения, а не поток шумных событий;
 - изменения route list доходят до клиентов в рамках sync interval.
 
-## Phase 7: Windows Adapter
+## Релиз 1.0: macOS и Windows
 
-Цель: добавить Windows desktop support.
+Отдельной фазы под Windows нет: Windows-адаптер, установщик и CI-раннер входят в фазы 1, 3, 4 и 5 наравне с macOS.
 
-Результаты:
+Условия выпуска 1.0:
 
-- Windows native adapter;
-- secure storage;
-- profile setup;
-- route sync;
-- fail-closed implementation;
-- Windows installer;
-- Windows CI/build job.
+- Definition of Done раздела 2.4 ТЗ выполнен для обеих платформ;
+- ручная матрица M1-M15 плюс W1-W6 и D1-D2 пройдена на чистых машинах;
+- leak-тесты L1-L8 пройдены на обеих платформах;
+- оба артефакта подписаны и собраны из одного тега.
 
-Критерии завершения:
-
-- пользователи Windows 10/11 могут установить приложение, подключиться, синхронизировать маршруты и отключиться;
-- fail-closed behavior проходит manual tests.
-
-## Phase 8: Android Technical Spike
+## Phase 7: Android Technical Spike
 
 Цель: проверить Android-архитектуру до полноценной разработки.
 
@@ -190,7 +212,7 @@
 - принято понятное go/no-go решение по Android implementation path;
 - известные риски и required native work задокументированы.
 
-## Phase 9: Android MVP
+## Phase 8: Android MVP
 
 Цель: выпустить первый Android test build, если spike успешен.
 
