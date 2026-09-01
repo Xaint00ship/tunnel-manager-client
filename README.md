@@ -50,5 +50,7 @@ Tunnel Manager Client - кроссплатформенное клиентско�
 
 ## Документы
 
-- [Техническое задание](docs/TECH_SPEC.md)
+- [Техническое задание](docs/TECH_SPEC.md) - детальная редакция с нумерованными требованиями
+- [Спецификация Backend API](docs/API_SPEC.md) - контракт `/client/v1/*`
+- [Каталог ошибок и правила отчетов](docs/ERROR_CATALOG.md) - категории, fingerprint, redaction, rate limit
 - [Дорожная карта](docs/ROADMAP.md)
