@@ -1,87 +1,87 @@
-# Tunnel Manager Client: Roadmap
+# Tunnel Manager Client: дорожная карта
 
-## Phase 0: Specification And Repository Setup
+## Phase 0: спецификация и настройка репозитория
 
-Goal: prepare the repository and agree on the product/technical direction.
+Цель: подготовить репозиторий и согласовать продуктовое/техническое направление.
 
-Deliverables:
+Результаты:
 
 - public repository;
 - `README.md`;
-- technical specification;
+- техническое задание;
 - roadmap;
-- initial issue list after specification approval;
-- decision record for the chosen stack.
+- стартовый список issues после утверждения спецификации;
+- decision record по выбранному стеку.
 
-Exit criteria:
+Критерии завершения:
 
-- stack approved;
-- MVP scope approved;
-- first platform confirmed as macOS Apple Silicon.
+- стек утвержден;
+- MVP scope утвержден;
+- первая платформа подтверждена как macOS Apple Silicon.
 
-## Phase 1: App Shell
+## Phase 1: оболочка приложения
 
-Goal: create the base Tauri application.
+Цель: создать базовое Tauri-приложение.
 
-Deliverables:
+Результаты:
 
 - Tauri v2 app;
 - React + TypeScript frontend;
-- package manager and workspace structure;
+- package manager и workspace structure;
 - linting/formatting;
 - basic CI;
-- app window with placeholder status screen;
-- local development commands.
+- окно приложения с placeholder status screen;
+- команды для локальной разработки.
 
-Exit criteria:
+Критерии завершения:
 
-- app runs locally on macOS Apple Silicon;
-- CI passes for TypeScript checks and basic build.
+- приложение запускается локально на macOS Apple Silicon;
+- CI проходит TypeScript checks и basic build.
 
-## Phase 2: Core TypeScript Logic
+## Phase 2: Core TypeScript логика
 
-Goal: build OS-independent product logic.
+Цель: собрать OS-independent продуктовую логику.
 
-Deliverables:
+Результаты:
 
 - API client;
 - shared API types;
 - local cache;
 - route list validator;
 - route diff engine;
-- state machine for connect/sync/error states;
-- mock backend for local development.
+- state machine для connect/sync/error states;
+- mock backend для локальной разработки.
 
-Exit criteria:
+Критерии завершения:
 
-- app can fetch and cache a route list from a mock API;
-- route changes produce deterministic add/remove operations;
-- unit tests cover core route logic.
+- приложение умеет получать и кешировать route list из mock API;
+- изменения маршрутов дают deterministic add/remove operations;
+- unit tests покрывают core route logic.
 
 ## Phase 3: macOS Tunnel Control MVP
 
-Goal: make the app useful on macOS.
+Цель: сделать приложение реально полезным на macOS.
 
-Deliverables:
+Результаты:
 
 - macOS native adapter skeleton;
-- secure storage through Keychain;
+- secure storage через Keychain;
 - tunnel profile connect/disconnect;
 - status detection;
 - basic route apply/remove;
-- admin permission flow where needed.
+- admin permission flow там, где нужны повышенные права.
 
-Exit criteria:
+Критерии завершения:
 
-- user can connect and disconnect from the app;
-- app can detect active tunnel interface;
-- protected routes are applied while connected.
+- пользователь может подключаться и отключаться из приложения;
+- приложение умеет определять active tunnel interface;
+- protected routes применяются при подключении.
 
-## Phase 4: Watchdog And Fail-Closed
+## Phase 4: Watchdog и Fail-Closed
 
-Goal: protect routing behavior during real-world failures.
+Цель: защитить маршрутизацию при реальных сбоях.
 
-Deliverables:
+Результаты:
 
 - route drift watchdog;
 - route repair;
@@ -91,17 +91,17 @@ Deliverables:
 - diagnostics panel;
 - redacted log export.
 
-Exit criteria:
+Критерии завершения:
 
-- route drift is repaired automatically;
-- protected destinations do not leak when the tunnel is down;
-- app recovers after sleep/wake without manual route cleanup.
+- route drift чинится автоматически;
+- protected destinations не утекают при падении tunnel;
+- приложение восстанавливается после sleep/wake без ручной чистки маршрутов.
 
-## Phase 5: Packaging And Distribution For macOS
+## Phase 5: Packaging и Distribution для macOS
 
-Goal: prepare a testable macOS build.
+Цель: подготовить тестируемый macOS build.
 
-Deliverables:
+Результаты:
 
 - Apple Silicon build artifact;
 - DMG packaging;
@@ -111,17 +111,17 @@ Deliverables:
 - signing/notarization plan;
 - install/uninstall cleanup checks.
 
-Exit criteria:
+Критерии завершения:
 
-- a tester can install the app from a DMG;
-- app runs after reboot if autostart is enabled;
-- uninstall removes helper/routes/config without leaving broken networking.
+- tester может установить приложение из DMG;
+- приложение запускается после перезагрузки, если включен autostart;
+- uninstall удаляет helper/routes/config без сломанной сети.
 
-## Phase 6: Backend API Hardening
+## Phase 6: усиление Backend API
 
-Goal: make the control plane safe for real users.
+Цель: сделать control plane безопасным для реальных пользователей.
 
-Deliverables:
+Результаты:
 
 - client auth endpoints;
 - route list versioning;
@@ -129,19 +129,19 @@ Deliverables:
 - subscription enforcement;
 - app version policy;
 - event ingestion;
-- admin dashboard changes if needed.
+- изменения admin dashboard, если понадобятся.
 
-Exit criteria:
+Критерии завершения:
 
-- expired users cannot receive usable route updates;
-- revoked devices stop working after token revocation;
-- route list changes propagate to clients within the configured sync interval.
+- expired users не получают usable route updates;
+- revoked devices перестают работать после token revocation;
+- изменения route list доходят до клиентов в рамках sync interval.
 
 ## Phase 7: Windows Adapter
 
-Goal: add Windows desktop support.
+Цель: добавить Windows desktop support.
 
-Deliverables:
+Результаты:
 
 - Windows native adapter;
 - secure storage;
@@ -151,16 +151,16 @@ Deliverables:
 - Windows installer;
 - Windows CI/build job.
 
-Exit criteria:
+Критерии завершения:
 
-- Windows 10/11 users can install, connect, sync routes, and disconnect;
-- fail-closed behavior passes manual tests.
+- пользователи Windows 10/11 могут установить приложение, подключиться, синхронизировать маршруты и отключиться;
+- fail-closed behavior проходит manual tests.
 
 ## Phase 8: Android Technical Spike
 
-Goal: prove the Android architecture before committing to a full release.
+Цель: проверить Android-архитектуру до полноценной разработки.
 
-Deliverables:
+Результаты:
 
 - Android Tauri shell evaluation;
 - system tunnel service prototype;
@@ -169,27 +169,26 @@ Deliverables:
 - Google Play policy checklist;
 - decision record.
 
-Exit criteria:
+Критерии завершения:
 
-- clear go/no-go decision for Android implementation path;
-- known risks and required native work are documented.
+- принято понятное go/no-go решение по Android implementation path;
+- известные риски и required native work задокументированы.
 
 ## Phase 9: Android MVP
 
-Goal: ship the first Android test build if the spike is successful.
+Цель: выпустить первый Android test build, если spike успешен.
 
-Deliverables:
+Результаты:
 
 - Android app build;
 - tunnel service;
 - route policy sync;
 - local cache;
 - connection status;
-- fail-closed equivalent where supported;
+- fail-closed equivalent там, где поддерживается;
 - internal testing build.
 
-Exit criteria:
+Критерии завершения:
 
-- Android user can install, connect, and receive route updates;
-- app behavior is acceptable under network changes and reboot.
-
+- Android user может установить приложение, подключиться и получать route updates;
+- поведение приложения приемлемое при network changes и reboot.

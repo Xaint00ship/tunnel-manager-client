@@ -1,112 +1,112 @@
-# Tunnel Manager Client: Technical Specification
+# Tunnel Manager Client: техническое задание
 
-## 1. Summary
+## 1. Краткое описание
 
-Tunnel Manager Client is a desktop and mobile application that installs on the user's device and manages protected split-routing locally. The backend remains responsible for users, subscriptions, route lists, endpoint metadata, and analytics. The client is responsible for connecting the device, syncing the allowlist, applying local routes, and preventing protected traffic from leaving through the regular network when the tunnel is down.
+Tunnel Manager Client - desktop/mobile-приложение, которое устанавливается на устройство пользователя и локально управляет защищенной split-routing логикой. Backend остается ответственным за пользователей, подписки, списки маршрутов, metadata tunnel-точек и аналитику. Клиент отвечает за подключение устройства, синхронизацию whitelist, применение локальных маршрутов и защиту от утечки защищенного трафика через обычную сеть при недоступности tunnel.
 
-The first release targets macOS on Apple Silicon. Windows and Android support must be designed into the architecture from the start, but not shipped in the first MVP.
+Первый релиз делаем под macOS на Apple Silicon. Поддержку Windows и Android нужно заложить в архитектуру сразу, но не выпускать в первом MVP.
 
-## 2. Goals
+## 2. Цели
 
-- Remove the need for a regional relay/gateway server.
-- Keep only foreign tunnel endpoints and a lightweight backend/control plane.
-- Move route synchronization and route enforcement to each user's device.
-- Keep most application code in TypeScript.
-- Reuse behavior from the existing Tunnel Manager service where possible.
-- Make the product simple for end users: install, sign in, connect, and forget.
+- Убрать необходимость в региональном relay/gateway-сервере.
+- Оставить только зарубежные tunnel-точки и легкий backend/control plane.
+- Перенести синхронизацию и применение маршрутов на устройство каждого пользователя.
+- Оставить большую часть кода приложения на TypeScript.
+- По возможности переиспользовать поведение текущего Tunnel Manager.
+- Сделать продукт простым для пользователя: установить, войти, подключиться и забыть.
 
-## 3. Non-Goals For MVP
+## 3. Что не входит в MVP
 
-- No direct database access from the client.
-- No traffic content inspection.
-- No enterprise MDM deployment in the first release.
-- No Linux client in the first release.
-- No full Android release before a dedicated technical spike.
-- No public exposure of infrastructure secrets, server addresses, private keys, tokens, or admin-only endpoints.
+- Прямое подключение клиента к базе данных.
+- Анализ содержимого трафика.
+- Enterprise MDM-деплой в первом релизе.
+- Linux-клиент в первом релизе.
+- Полноценный Android-релиз до отдельного technical spike.
+- Публикация инфраструктурных секретов, адресов серверов, private keys, tokens или admin-only endpoints.
 
-## 4. Product Requirements
+## 4. Продуктовые требования
 
-### 4.1 User Flow
+### 4.1 Пользовательский сценарий
 
-1. User installs Tunnel Manager Client.
-2. User signs in or activates the device with an issued account/token.
-3. Client fetches subscription and endpoint metadata from the backend API.
-4. User presses Connect.
-5. Client starts the system tunnel connection.
-6. Client downloads and applies the latest allowlist.
-7. Client keeps routes synchronized in the background.
-8. User can disconnect manually.
-9. If access expires, client disconnects and removes protected routes.
+1. Пользователь устанавливает Tunnel Manager Client.
+2. Пользователь входит в аккаунт или активирует устройство через выданный account/token.
+3. Клиент получает из backend API данные подписки и tunnel-точки.
+4. Пользователь нажимает "Подключить".
+5. Клиент запускает системное tunnel-подключение.
+6. Клиент скачивает и применяет актуальный whitelist.
+7. Клиент синхронизирует маршруты в фоне.
+8. Пользователь может вручную отключиться.
+9. Если доступ истек, клиент отключается и удаляет защищенные маршруты.
 
-### 4.2 Main Screen
+### 4.2 Главный экран
 
-The main screen should show:
+Главный экран должен показывать:
 
-- connection state;
-- account/subscription state;
-- remaining access time;
-- last successful route sync time;
-- number of active protected routes;
-- current app version;
-- short actionable error when something is wrong.
+- состояние подключения;
+- состояние аккаунта/подписки;
+- оставшееся время доступа;
+- время последней успешной синхронизации маршрутов;
+- количество активных защищенных маршрутов;
+- текущую версию приложения;
+- короткую понятную ошибку, если что-то не работает.
 
-### 4.3 Background Behavior
+### 4.3 Фоновая работа
 
-The app should:
+Приложение должно:
 
-- sync allowlist every 5-10 minutes;
-- keep a local cache of the last valid allowlist;
-- run a watchdog for route drift;
-- restore missing routes automatically;
-- remove obsolete routes after list updates;
-- survive sleep/wake, network changes, and endpoint reconnection;
-- start automatically after OS reboot when the user enables autostart.
+- синхронизировать whitelist каждые 5-10 минут;
+- хранить локальный кеш последнего валидного whitelist;
+- запускать watchdog для проверки drift маршрутов;
+- автоматически восстанавливать отсутствующие маршруты;
+- удалять устаревшие маршруты после обновления списка;
+- переживать sleep/wake, смену сети и reconnect tunnel-точки;
+- запускаться после перезагрузки ОС, если пользователь включил autostart.
 
-### 4.4 Fail-Closed Behavior
+### 4.4 Fail-Closed поведение
 
-If the tunnel is unavailable, protected destinations must not fall back to the regular network. The exact implementation depends on the platform:
+Если tunnel недоступен, защищенные направления не должны уходить через обычную сеть. Реализация зависит от платформы:
 
-- macOS: route/firewall rules through a privileged helper or system network extension.
-- Windows: route table plus Windows filtering rules where needed.
-- Android: tunnel service rules inside the Android system tunnel service.
+- macOS: route/firewall rules через privileged helper или system network extension.
+- Windows: route table плюс Windows filtering/firewall rules, если одних маршрутов недостаточно.
+- Android: правила внутри системного Android tunnel service.
 
-Fail-closed must be configurable by policy, but enabled by default.
+Fail-closed должен настраиваться политикой, но по умолчанию быть включенным.
 
-### 4.5 Local Cache
+### 4.5 Локальный кеш
 
-The client stores:
+Клиент хранит:
 
-- latest valid allowlist;
-- allowlist version/hash;
-- last sync timestamp;
+- последний валидный whitelist;
+- версию/hash whitelist;
+- timestamp последней синхронизации;
 - user/session metadata;
-- non-secret app preferences.
+- несекретные настройки приложения.
 
-Secrets must be stored in OS-secure storage:
+Секреты нужно хранить в защищенном хранилище ОС:
 
 - macOS Keychain;
-- Windows Credential Manager or DPAPI;
+- Windows Credential Manager или DPAPI;
 - Android Keystore.
 
-### 4.6 Diagnostics
+### 4.6 Диагностика
 
-The client should expose:
+Клиент должен показывать:
 
-- connection status;
-- current tunnel interface;
-- route count;
-- last sync error;
-- backend reachability status;
-- endpoint reachability status;
-- exportable diagnostic bundle with logs and redacted config.
+- статус подключения;
+- текущий tunnel-интерфейс;
+- количество маршрутов;
+- последнюю ошибку синхронизации;
+- доступность backend;
+- доступность tunnel endpoint;
+- экспортируемый diagnostic bundle с логами и redacted config.
 
-Diagnostic exports must redact secrets.
+Экспорт диагностики должен скрывать секреты.
 
-## 5. Backend API Requirements
+## 5. Требования к Backend API
 
-The client talks only to the backend API, not to the database.
+Клиент работает только через backend API, не через базу данных.
 
-Required endpoints:
+Нужные endpoints:
 
 - `POST /client/v1/auth/activate`
 - `POST /client/v1/auth/refresh`
@@ -116,38 +116,38 @@ Required endpoints:
 - `POST /client/v1/events`
 - `POST /client/v1/diagnostics`
 
-### 5.1 Route List Response
+### 5.1 Ответ со списком маршрутов
 
-The route list should include:
+Route list должен включать:
 
-- list version;
+- версию списка;
 - content hash;
-- generated timestamp;
+- время генерации;
 - TTL;
-- grouped services;
-- IPv4 CIDRs;
-- IPv6 CIDRs when supported;
-- optional emergency blocklist;
-- minimum supported app version.
+- группировку по сервисам;
+- IPv4 CIDR;
+- IPv6 CIDR, когда платформа поддерживается;
+- опциональный emergency blocklist;
+- минимальную поддерживаемую версию приложения.
 
-The client must ignore invalid CIDRs and report validation errors.
+Клиент должен игнорировать невалидные CIDR и отправлять validation errors в диагностику.
 
 ### 5.2 Events
 
-The client should send lightweight events:
+Клиент должен отправлять легкие события:
 
-- app started;
-- connection started/stopped;
-- route sync succeeded/failed;
-- fail-closed activated/deactivated;
-- subscription expired;
-- app version.
+- приложение запущено;
+- подключение начато/остановлено;
+- синхронизация маршрутов успешна/ошибка;
+- fail-closed активирован/деактивирован;
+- подписка истекла;
+- версия приложения.
 
-Events must not include visited URLs, payload contents, browsing history, or traffic content.
+Events не должны содержать посещенные URL, payload, историю браузинга или содержимое трафика.
 
-## 6. Architecture
+## 6. Архитектура
 
-Recommended monorepo layout:
+Рекомендуемая структура monorepo:
 
 ```text
 apps/
@@ -169,31 +169,31 @@ docs/
 
 ### 6.1 TypeScript Core
 
-The TypeScript core owns:
+TypeScript core отвечает за:
 
 - API client;
-- route list validation;
+- валидацию route list;
 - route diffing;
-- app state machine;
+- state machine приложения;
 - retry/backoff policies;
-- local cache format;
+- формат локального кеша;
 - diagnostic model;
-- UI-facing status model.
+- status model для UI.
 
 ### 6.2 Native Layer
 
-The native layer owns:
+Native layer отвечает за:
 
-- starting/stopping the OS tunnel profile;
-- reading active network interfaces;
-- applying/removing routes;
-- applying fail-closed rules;
-- secure secret storage;
+- запуск/остановку системного tunnel profile;
+- чтение активных сетевых интерфейсов;
+- применение/удаление маршрутов;
+- применение fail-closed правил;
+- защищенное хранение секретов;
 - OS-specific autostart integration.
 
-The native layer must expose a small command API to the TypeScript app.
+Native layer должен отдавать в TypeScript-приложение небольшой command API.
 
-### 6.3 Suggested Command API
+### 6.3 Предлагаемый Command API
 
 ```ts
 type TunnelStatus = {
@@ -215,58 +215,58 @@ type NativeAdapter = {
 };
 ```
 
-## 7. Platform Notes
+## 7. Платформенные заметки
 
 ### 7.1 macOS Apple Silicon
 
-The macOS MVP should start with the least risky implementation:
+macOS MVP стоит начинать с наименее рискованной реализации:
 
 - Tauri desktop app;
-- helper process for privileged route operations;
-- OS tunnel profile management;
-- Keychain for secrets;
-- LaunchAgent/LaunchDaemon for background work if needed.
+- helper process для privileged route operations;
+- управление OS tunnel profile;
+- Keychain для секретов;
+- LaunchAgent/LaunchDaemon для фоновой работы, если понадобится.
 
-Open question for implementation:
+Открытый вопрос реализации:
 
-- use existing OS tunnel profile flow first;
-- or move to NetworkExtension if profile control becomes too limited.
+- сначала использовать существующий OS tunnel profile flow;
+- или перейти на NetworkExtension, если управление профилем окажется слишком ограниченным.
 
 ### 7.2 Windows
 
-Windows support should use:
+Windows support должен использовать:
 
-- native desktop app build through Tauri;
-- PowerShell/VPN client APIs for profile and route setup where reliable;
-- Windows Filtering Platform or firewall rules for fail-closed if route-only behavior is insufficient;
-- Credential Manager/DPAPI for secrets;
-- scheduled task or service for background behavior.
+- native desktop app build через Tauri;
+- PowerShell/VPN client APIs для настройки профиля и маршрутов, где это надежно;
+- Windows Filtering Platform или firewall rules для fail-closed, если маршрутов недостаточно;
+- Credential Manager/DPAPI для секретов;
+- scheduled task или service для фоновой работы.
 
 ### 7.3 Android
 
-Android requires a separate technical spike. It should likely use Android's system tunnel service model and cannot be treated like desktop route management.
+Android требует отдельного technical spike. Скорее всего, нужно использовать системную модель Android tunnel service; относиться к Android как к desktop route management нельзя.
 
-Key questions:
+Ключевые вопросы:
 
-- whether to implement the tunnel fully in-app;
-- whether to embed an existing tunnel library;
-- how to keep a consistent product UX with desktop;
-- how to support always-on behavior.
+- реализовывать ли tunnel полностью внутри приложения;
+- встраивать ли существующую tunnel-библиотеку;
+- как сохранить единый UX с desktop;
+- как поддержать always-on behavior.
 
-## 8. Security Requirements
+## 8. Требования безопасности
 
-- No direct database access from clients.
-- No hardcoded production secrets.
-- API access tokens must be revocable.
-- Route lists should be signed or hash-validated.
-- Backend should enforce subscription/access state.
-- Client should pin minimum API compatibility.
-- Logs must redact secrets and endpoint credentials.
-- Public repository must not contain production infrastructure details.
+- Клиенты не подключаются к базе данных напрямую.
+- Production secrets не хардкодятся.
+- API access tokens должны быть отзывными.
+- Route lists должны быть подписаны или hash-validated.
+- Backend должен проверять subscription/access state.
+- Клиент должен учитывать minimum API compatibility.
+- Логи должны скрывать secrets и endpoint credentials.
+- Public repository не должен содержать production infrastructure details.
 
-## 9. Testing Requirements
+## 9. Требования к тестированию
 
-### 9.1 Unit Tests
+### 9.1 Unit tests
 
 - route validation;
 - route aggregation;
@@ -275,15 +275,15 @@ Key questions:
 - retry/backoff behavior;
 - subscription state transitions.
 
-### 9.2 Integration Tests
+### 9.2 Integration tests
 
 - mock backend API;
-- route sync with changed lists;
-- offline startup from local cache;
+- route sync при изменении списков;
+- offline startup из local cache;
 - expired subscription;
-- invalid route list handling.
+- обработка invalid route list.
 
-### 9.3 Manual Platform Tests
+### 9.3 Manual platform tests
 
 macOS MVP:
 
@@ -297,12 +297,11 @@ macOS MVP:
 - fail-closed behavior;
 - uninstall cleanup.
 
-## 10. Open Questions
+## 10. Открытые вопросы
 
-- Exact user activation model: email link, device code, Telegram approval, or admin-issued invite.
-- Exact tunnel transport for the first release.
-- Whether one user can activate multiple devices.
-- Whether route lists differ by tariff/user/group.
-- Required level of traffic accounting on the client side.
-- Distribution model: direct DMG download, signed/notarized app, or store distribution.
-
+- Точная модель активации пользователя: email link, device code, Telegram approval или admin-issued invite.
+- Конкретный tunnel transport для первого релиза.
+- Может ли один пользователь активировать несколько устройств.
+- Отличаются ли route lists по тарифу/user/group.
+- Нужен ли traffic accounting на стороне клиента.
+- Модель распространения: direct DMG download, signed/notarized app или store distribution.
