@@ -31,7 +31,8 @@
 - package manager и workspace structure;
 - linting/formatting;
 - basic CI;
-- окно приложения с placeholder status screen;
+- окно приложения с простым пользовательским status screen;
+- выключенный по умолчанию placeholder для "Режима эксперта";
 - команды для локальной разработки.
 
 Критерии завершения:
@@ -51,12 +52,15 @@
 - route list validator;
 - route diff engine;
 - state machine для connect/sync/error states;
+- модель пользовательских и экспертных состояний UI;
+- модель redacted error report;
 - mock backend для локальной разработки.
 
 Критерии завершения:
 
 - приложение умеет получать и кешировать route list из mock API;
 - изменения маршрутов дают deterministic add/remove operations;
+- обычный UI не показывает техническую диагностику без режима эксперта;
 - unit tests покрывают core route logic.
 
 ## Phase 3: macOS Tunnel Control MVP
@@ -87,6 +91,10 @@
 - route drift watchdog;
 - route repair;
 - fail-closed policy;
+- автоматическая отправка важных ошибок подключения через backend;
+- ручная кнопка отправки ошибки админам;
+- дедупликация и rate-limit error reports;
+- режим эксперта с локальными пользовательскими правилами whitelist;
 - recovery after sleep/wake;
 - recovery after network changes;
 - diagnostics panel;
@@ -96,6 +104,9 @@
 
 - route drift чинится автоматически;
 - protected destinations не утекают при падении tunnel;
+- важные ошибки подключения попадают админам без чувствительных данных;
+- пользователь может одной кнопкой отправить ошибку, если она не отправилась автоматически;
+- локальные пользовательские whitelist-правила применяются только на устройстве пользователя;
 - приложение восстанавливается после sleep/wake без ручной чистки маршрутов.
 
 ## Phase 5: Packaging и Distribution для macOS
@@ -130,12 +141,16 @@
 - subscription enforcement;
 - app version policy;
 - event ingestion;
+- endpoint для error reports;
+- Telegram-уведомления администраторам по важным ошибкам;
+- дедупликация и rate-limit уведомлений;
 - изменения admin dashboard, если понадобятся.
 
 Критерии завершения:
 
 - expired users не получают usable route updates;
 - revoked devices перестают работать после token revocation;
+- админы получают только важные ошибки подключения, а не поток шумных событий;
 - изменения route list доходят до клиентов в рамках sync interval.
 
 ## Phase 7: Windows Adapter
