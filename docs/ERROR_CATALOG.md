@@ -53,6 +53,8 @@ disconnect.route_remove
 disconnect.fail_closed_disable
 disconnect.tunnel_stop
 uninstall.cleanup
+update.check
+update.install
 ```
 
 ---
@@ -83,8 +85,9 @@ uninstall.cleanup
 | `route_list_rejected` | error | `runtime.route_sync` | Настройки маршрутов не приняты | Автоматический повтор |
 | `route_limit_exceeded` | warning | `runtime.route_apply` | Часть маршрутов не применена | Ничего, отправляется админам как `error` |
 | `drift_repair_failed` | error | `runtime.drift_repair` | Не удается удержать настройки соединения | Переподключиться |
-| `cache_hard_expired` | error | `runtime.route_sync` | Давно не удается обновить настройки | Проверить интернет |
+| `cache_hard_expired` | error | `connect.preflight` | Давно не удавалось обновить настройки, для подключения нужен интернет | Проверить интернет и повторить |
 | `client_too_old` | critical | `profile.fetch` | Нужно обновить приложение | Обновить |
+| `update_failed` | error | `update.install` | Не удалось установить обновление | Повторить / скачать вручную |
 
 ### 4.2. Не отправляются автоматически
 

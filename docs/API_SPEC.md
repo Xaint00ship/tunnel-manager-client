@@ -92,12 +92,14 @@
     "osVersion": "14.5",
     "appVersion": "1.4.2",
     "displayName": "MacBook Pro"
-  }
+  },
+  "wireguardPublicKey": "<base64, 32 байта>"
 }
 ```
 
 - `deviceId` генерируется клиентом при первой активации: случайные 128 бит в hex. Аппаратные идентификаторы использовать запрещено.
 - `displayName` - необязательное человекочитаемое имя для админки, задается пользователем или берется из имени компьютера.
+- `wireguardPublicKey` - публичный ключ пары, сгенерированной на клиенте (ADR-001). Приватный ключ остается в OS keystore устройства и на backend не передается никогда.
 
 Ответ `200`:
 
@@ -120,6 +122,8 @@
 - `API-010` (MUST). Код активации одноразовый и имеет ограниченный срок жизни.
 - `API-011` (MUST). При превышении лимита устройств backend возвращает `device_limit_reached` и список активных устройств для отображения пользователю (без чувствительных данных).
 - `API-012` (MUST). Повторная активация на том же `deviceId` заменяет предыдущую регистрацию и не расходует лимит.
+- `API-013` (MUST). Backend регистрирует `wireguardPublicKey` как peer на tunnel-точке, назначает устройству адреса внутри туннеля и отзывает peer при отзыве устройства. Смена ключа возможна только через повторную активацию.
+- `API-014` (MUST). Коды активации выдаются двумя источниками, Telegram-ботом после оплаты и админкой вручную, в одном формате и с одним сроком жизни (`FR-008`).
 
 ---
 
@@ -174,11 +178,11 @@
   },
   "policy": {
     "syncIntervalSec": 420,
-    "watchdogIntervalSec": 20,
+    "watchdogIntervalSec": 60,
     "failClosedDefault": true,
     "failClosedUserOverride": true,
     "staleGraceMultiplier": 3,
-    "hardExpirySec": 604800,
+    "hardExpirySec": 2592000,
     "maxRoutes": 10000,
     "errorReportRateLimitPerHour": 4
   },
@@ -193,7 +197,8 @@
 Требования:
 
 - `API-030` (MUST). Профиль запрашивается при старте приложения, при подключении и не реже одного раза в час.
-- `API-031` (MUST). Клиент применяет присланные значения `policy`, но ограничивает их безопасными границами: `syncIntervalSec` в диапазоне 300-600, `watchdogIntervalSec` в диапазоне 15-30.
+- `API-031` (MUST). Клиент применяет присланные значения `policy`, но ограничивает их безопасными границами: `syncIntervalSec` в диапазоне 300-600, `watchdogIntervalSec` в диапазоне 30-120 (это интервал контрольной сверки, основной механизм watchdog - события ОС, `FR-050`), `hardExpirySec` не меньше 7 суток.
+- `API-033` (MUST). Истечение `hardExpirySec` влияет только на новое подключение; работающее подключение backend не может разорвать через эту политику (`FR-162`). Для разрыва используется отзыв устройства или истечение подписки.
 - `API-032` (MUST). `failClosedUserOverride: false` означает, что пользователь не может выключить fail-closed.
 
 ---
@@ -262,6 +267,8 @@
 - `API-042` (MUST). Backend отдает `ETag`, равный `"<version>"`, и поддерживает `If-None-Match`.
 - `API-043` (MUST). Ответ отдается со сжатием, если клиент прислал `Accept-Encoding: gzip`.
 - `API-044` (MUST). Устройству с истекшей подпиской backend возвращает `403 subscription_expired` и не отдает список.
+- `API-045` (MUST). Backend формирует `ipv4` и `ipv6` сервисов сам: доменные списки администратора разрешаются в IP-наборы на backend по опубликованным диапазонам провайдеров и резолву с нескольких точек (ADR-003, `FR-165`). Клиент домены не получает и не резолвит.
+- `API-046` (MUST). Поле `signature` присутствует в ответе с 1.0, чтобы клиент 1.1 мог начать проверку без изменения контракта; клиент 1.0 его игнорирует (`FR-155`).
 
 ---
 
@@ -273,13 +280,14 @@
 {
   "endpointId": "ep_eu_1",
   "title": "Европа 1",
+  "protocol": "wireguard",
   "host": "<ENDPOINT_HOST>",
   "port": 51820,
-  "protocol": "<TUNNEL_PROTOCOL>",
-  "publicKey": "<ENDPOINT_PUBLIC_KEY>",
-  "clientConfigRef": "cfg_7f21",
+  "serverPublicKey": "<ENDPOINT_PUBLIC_KEY>",
+  "assignedAddresses": ["<TUNNEL_IPV4>/32", "<TUNNEL_IPV6>/128"],
   "keepaliveSec": 25,
   "mtu": 1380,
+  "priority": 1,
   "serverTime": "2026-09-01T12:00:00Z",
   "minSupportedVersion": "1.2.0"
 }
@@ -289,12 +297,16 @@
 
 - `API-050` (MUST). Endpoint выдается только активному устройству с валидной подпиской.
 - `API-051` (MUST). Клиент **MUST** исключить `host` (и его разрешенный IP) из набора tunnel-маршрутов, чтобы не создать петлю.
-- `API-052` (MUST). Клиент **MUST NOT** логировать `host`, `publicKey` и `clientConfigRef` в открытом виде; в диагностике используется `endpointId` и хеш.
-- `API-053` (SHOULD). Backend **SHOULD** уметь выдавать несколько endpoint с приоритетом, чтобы клиент мог переключиться при недоступности основного. В MVP допускается один.
+- `API-052` (MUST). Клиент **MUST NOT** логировать `host`, `serverPublicKey` и `assignedAddresses` в открытом виде; в диагностике используется `endpointId` и хеш.
+- `API-053` (MUST, 1.1). Backend отдает несколько endpoint с `priority`, клиент переключается на следующий при недоступности основного. В 1.0 всегда один endpoint, поле `priority` уже есть.
+- `API-054` (MUST). `assignedAddresses` выдаются per device и привязаны к `wireguardPublicKey` устройства; при повторной активации адреса могут смениться.
+- `API-055` (MUST). `AllowedIPs` peer на клиенте не приходят из этого ответа: они равны актуальному route list (`GET /client/v1/routes`) плюс локальные правила. Endpoint описывает только "куда подключаться", а не "что маршрутизировать".
 
 ---
 
-## 7. `POST /client/v1/events`
+## 7. `POST /client/v1/events` (релиз 1.1)
+
+Endpoint относится к релизу 1.1 (ТЗ, раздел 3.4). В 1.0 backend видит устройство по запросам `profile` и `routes`, этого достаточно для списка устройств в админке (`API-005`). Контракт зафиксирован сейчас, чтобы клиент 1.1 не менял схему.
 
 Запрос:
 
@@ -405,7 +417,7 @@
     "osErrorCode": -60005
   },
   "diagnostics": {
-    "message": "helper returned error while starting tunnel profile",
+    "message": "helper returned error while creating tunnel interface",
     "lastSteps": ["helper.verify.ok", "tunnel.profile.load.ok", "tunnel.start.failed"]
   },
   "manual": false
