@@ -42,6 +42,7 @@ endpoint.fetch
 connect.preflight
 connect.helper_install
 connect.tunnel_start
+connect.ikev2_start
 connect.route_apply
 connect.fail_closed_enable
 runtime.route_sync
@@ -69,6 +70,9 @@ update.install
 | `tunnel_profile_create_failed` | critical | `connect.tunnel_start` | Не удалось настроить защищенное соединение на этом устройстве | Повторить / Отправить ошибку |
 | `tunnel_start_failed` | error | `connect.tunnel_start` | Не удалось запустить защищенное соединение | Повторить |
 | `tunnel_endpoint_unreachable` | error | `connect.tunnel_start` | Сервер подключения сейчас недоступен | Повторить позже |
+| `ikev2_setup_failed` | critical | `connect.ikev2_start` | Не удалось настроить резервное соединение на этом устройстве | Повторить / Отправить ошибку |
+| `ikev2_auth_failed` | error | `connect.ikev2_start` | Сервер не принял учетные данные устройства | Активировать заново |
+| `all_transports_failed` | error | `connect.tunnel_start` | Не удалось подключиться ни одним способом | Повторить позже / Отправить ошибку |
 | `route_apply_failed` | error | `connect.route_apply`, `runtime.route_apply` | Не удалось настроить маршруты на этом устройстве | Повторить |
 | `route_remove_failed` | error | `disconnect.route_remove` | Не удалось убрать настройки соединения | Повторить |
 | `fail_closed_enable_failed` | critical | `connect.fail_closed_enable` | Не удалось включить защиту от утечек, подключение остановлено | Повторить |
@@ -102,10 +106,13 @@ update.install
 | `backend_unreachable_short` | warning | недоступность backend короче grace-периода |
 | `route_sync_ok` | info | успешная синхронизация |
 | `drift_repaired` | info | drift починен автоматически |
+| `transport_fallback` | info | переключение на следующий транспорт по политике; копится в диагностике (`FR-267`) |
 | `health_probe_failed` | warning | один мертвый цикл проб; второй подряд запускает пересборку, и только провал после пересборки становится `health_rebuild_failed` |
 | `activation_code_invalid` | warning | ошибка ввода пользователя |
 | `authorization_pending` | info | ожидание подтверждения входа в боте |
 | `device_code_expired` | warning | пользователь не подтвердил вход в боте за 10 минут |
+| `trial_already_used` | warning | бот отклонил повторный пробный период (`FR-272`) |
+| `admin_action_denied` | warning | вызов admin API без роли; пишется в аудит, пользователю не показывается |
 | `duplicate_report_suppressed` | info | повтор в пределах rate limit |
 
 `user_cancelled_prompt` и `network_unavailable` доступны в режиме эксперта и попадают в diagnostic bundle, но не создают уведомлений.

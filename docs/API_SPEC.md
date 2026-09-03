@@ -97,7 +97,8 @@
     "appVersion": "1.0.0",
     "displayName": "DESKTOP-1"
   },
-  "wireguardPublicKey": "<base64, 32 байта>"
+  "wireguardPublicKey": "<base64, 32 байта>",
+  "intent": "login"
 }
 ```
 
@@ -114,6 +115,7 @@
 ```
 
 - `deviceCode` знает только приложение; `userCode` уходит в бота по ссылке или вводится в боте вручную.
+- `intent`: `login` или `trial`. При `trial` бот сразу ведет нового пользователя по онбордингу с пробной подпиской на `trialDays` из настроек (`FR-270`, `FR-271`); для существующего пользователя `trial` равносилен `login`.
 - `API-015` (MUST). Код связки одноразовый, живет 10 минут, привязан к `deviceId` и публичному ключу из запроса.
 
 ### 2.2. `POST /client/v1/auth/device-token`
@@ -130,7 +132,7 @@
 | 410 | `device_code_expired` | запросить новый код |
 | 403 | `subscription_expired`, `device_limit_reached`, `user_not_found` | бот отказал; текст для пользователя в `message` |
 
-- `API-016` (MUST). Подтверждение делает бот вызовом `POST /admin/v1/device-codes/{userCode}/approve` с `userId` (раздел 11); `client-api` в этот момент регистрирует peer и выдает токены при следующем опросе.
+- `API-016` (MUST). Подтверждение делает бот вызовом `POST /admin/v1/device-codes/{userCode}/approve` с `userId` и `role` (`user` или `admin` по списку администраторов бота), раздел 11; `client-api` в этот момент регистрирует peer WireGuard, выдает EAP-учетку IKEv2 и отдает токены при следующем опросе.
 - `API-017` (MUST). Пользователь, которого бот не знает, получает в боте обычный онбординг; код связки остается в ожидании до истечения, приложение показывает «дождитесь подтверждения».
 
 ### 2.3. `POST /client/v1/auth/activate`
@@ -218,10 +220,11 @@
 
 ```json
 {
-  "user": { "id": "usr_2c81", "displayName": "Пользователь" },
+  "user": { "id": "usr_2c81", "displayName": "Пользователь", "role": "user" },
   "subscription": {
     "status": "active",
     "plan": "standard",
+    "isTrial": false,
     "expiresAt": "2026-10-01T00:00:00Z",
     "graceUntil": null
   },
@@ -240,7 +243,9 @@
     "staleGraceMultiplier": 3,
     "hardExpirySec": 2592000,
     "maxRoutes": 10000,
-    "errorReportRateLimitPerHour": 4
+    "errorReportRateLimitPerHour": 4,
+    "transports": ["wireguard", "ikev2"],
+    "transportTimeoutSec": 15
   },
   "serverTime": "2026-09-01T12:00:00Z",
   "minSupportedVersion": "1.2.0"
@@ -249,6 +254,8 @@
 
 `subscription.status`: `active` | `expired` | `suspended`.
 `device.status`: `active` | `revoked`.
+`user.role`: `user` | `admin` (`FR-280`). В пробном периоде `plan: "trial"` и `isTrial: true`.
+`policy.transports`: порядок транспортов (`FR-260`); клиент игнорирует неизвестные значения. `policy.transportTimeoutSec` ограничивается клиентом диапазоном 10-30.
 
 Требования:
 
@@ -337,15 +344,26 @@
 {
   "endpointId": "ep_eu_1",
   "title": "Европа 1",
-  "protocol": "wireguard",
   "host": "<ENDPOINT_HOST>",
-  "port": 51820,
-  "serverPublicKey": "<ENDPOINT_PUBLIC_KEY>",
-  "assignedAddresses": ["<TUNNEL_IPV4>/32", "<TUNNEL_IPV6>/128"],
-  "dnsResolver": "<TUNNEL_RESOLVER_IP>",
-  "keepaliveSec": 25,
-  "mtu": 1380,
   "priority": 1,
+  "dnsResolver": "<TUNNEL_RESOLVER_IP>",
+  "transports": [
+    {
+      "type": "wireguard",
+      "port": 51820,
+      "serverPublicKey": "<ENDPOINT_PUBLIC_KEY>",
+      "assignedAddresses": ["<TUNNEL_IPV4>/32", "<TUNNEL_IPV6>/128"],
+      "keepaliveSec": 25,
+      "mtu": 1380
+    },
+    {
+      "type": "ikev2",
+      "remoteId": "<ENDPOINT_HOST>",
+      "identity": "dev_9f3a7c2e5b114d8e",
+      "password": "<EAP_PASSWORD, только в первом ответе после активации>",
+      "caCertPem": null
+    }
+  ],
   "serverTime": "2026-09-01T12:00:00Z",
   "minSupportedVersion": "1.2.0"
 }
@@ -355,7 +373,9 @@
 
 - `API-050` (MUST). Endpoint выдается только активному устройству с валидной подпиской.
 - `API-051` (MUST). Клиент **MUST** исключить `host` (и его разрешенный IP) из набора tunnel-маршрутов, чтобы не создать петлю.
-- `API-052` (MUST). Клиент **MUST NOT** логировать `host`, `serverPublicKey` и `assignedAddresses` в открытом виде; в диагностике используется `endpointId` и хеш.
+- `API-052` (MUST). Клиент **MUST NOT** логировать `host`, `serverPublicKey`, `assignedAddresses`, `identity` и `password` в открытом виде; в диагностике используется `endpointId` и хеш.
+- `API-058` (MUST). Пароль IKEv2 выдается один раз: в первом ответе после активации и после явной ротации по `POST /client/v1/endpoint/rotate-ikev2`. В остальных ответах `password: null`; клиент хранит его в OS keystore (`FR-263`).
+- `API-059` (MUST). `caCertPem` заполняется только если сервер использует собственный CA (OQ-10); при публично доверенном сертификате поле `null`, и клиент ничего не устанавливает в системное хранилище.
 - `API-053` (MUST, 1.1). Backend отдает несколько endpoint с `priority`, клиент переключается на следующий при недоступности основного. В 1.0 всегда один endpoint, поле `priority` уже есть.
 - `API-054` (MUST). `assignedAddresses` выдаются per device и привязаны к `wireguardPublicKey` устройства; при повторной активации адреса могут смениться.
 - `API-055` (MUST). `AllowedIPs` peer на клиенте не приходят из этого ответа: они равны актуальному route list (`GET /client/v1/routes`) плюс локальные правила. Endpoint описывает только "куда подключаться", а не "что маршрутизировать". Это отличие от сегодняшних `.conf` бота, где `AllowedIPs = 0.0.0.0/0`.
@@ -547,6 +567,13 @@ Fingerprint: a1b2c3d4e5f60718
 | `DELETE /admin/v1/devices/{deviceId}` | бот, админка | отозвать устройство |
 | `GET /admin/v1/error-reports` | админка | отчеты с фильтром по fingerprint и устройству |
 | `GET /admin/v1/health` | вотчер бота | версия, возраст копии списка, возраст копии статусов, число peer на `wg0` |
+| `GET /admin/v1/settings`, `PUT /admin/v1/settings` | приложение (admin), бот | политика клиентов, `trialDays`, `minSupportedVersion`, порядок транспортов (`FR-281`) |
+| `GET /admin/v1/users` | приложение (admin) | список пользователей с поиском и пагинацией |
+| `POST /admin/v1/users/{userId}/extend`, `.../enable`, `.../disable` | приложение (admin) | те же действия, что в карточке бота; проксируются в дашборд как источник правды |
+| `GET /admin/v1/routes`, `POST /admin/v1/routes`, `DELETE /admin/v1/routes/{id}`, `POST /admin/v1/routes/apply` | приложение (admin) | группы и записи списка; запись идет в `groups`/`ips` дашборда с токеном на запись (`FR-283`) |
+| `POST /admin/v1/error-reports/{id}/resolve` | приложение (admin) | отметка «решено» |
+| `GET /admin/v1/status` | приложение (admin) | peer онлайн по транспортам, возраст копий, распределение версий |
+| `GET /admin/v1/audit` | приложение (admin) | журнал действий администраторов |
 
 `POST /admin/v1/activation-codes`, запрос:
 
@@ -581,6 +608,40 @@ Fingerprint: a1b2c3d4e5f60718
 - `API-122` (MUST). `GET /api/tunnel/users` сегодня доступен только под JWT администратора; для сверки дашборд **MUST** принимать сервисный токен с правами только на чтение. Это единственное изменение в `tunnel-dashboard-backend` ради клиентского контура, кроме вызовов admin API из бота и админки.
 - `API-123` (MUST). Бот получает обработку `/start link_<код>` для сценария deep link (проверка пользователя и подписки, при необходимости обычный онбординг, затем `approve`) и кнопку «Активировать приложение» в меню пользователя и в карточке администратора для ручного кода. Обе ведут в admin API; логику кодов бот не дублирует.
 - `API-124` (MUST). Если `client-api` недоступен для бота, бот честно сообщает об этом, а не выдает код из собственного генератора.
+
+Настройки (`GET /admin/v1/settings`):
+
+```json
+{
+  "trialDays": 7,
+  "deviceLimitDefault": 3,
+  "minSupportedVersion": "1.0.0",
+  "transports": ["wireguard", "ikev2"],
+  "transportTimeoutSec": 15,
+  "policy": {
+    "syncIntervalSec": 420,
+    "watchdogIntervalSec": 60,
+    "failClosedDefault": true,
+    "failClosedUserOverride": true,
+    "staleGraceMultiplier": 3,
+    "hardExpirySec": 2592000,
+    "maxRoutes": 10000,
+    "errorReportRateLimitPerHour": 4
+  },
+  "updatedAt": "2026-09-03T10:00:00Z",
+  "updatedBy": "tg:123456789"
+}
+```
+
+Требования к admin API для приложения:
+
+- `API-130` (MUST). Все `admin/v1/*` для приложения требуют access token с ролью `admin`; роль проверяется на сервере при каждом запросе (`FR-280`). Бот и админка ходят по своему токену, приложение - по пользовательскому токену с ролью.
+- `API-131` (MUST). `PUT /admin/v1/settings` валидирует каждое поле теми же границами, что клиент (`API-031`), и отклоняет весь запрос при одной невалидной настройке. Ответ содержит `updatedAt` и `updatedBy`.
+- `API-132` (MUST). Бот читает `trialDays` из `GET /admin/v1/settings` при создании пробной подписки; при недоступности `client-api` использует `tunnel_trial_days` из `.env` (`FR-271`).
+- `API-133` (MUST). Правки списка проходят те же guardrails, что `/addip` бота (`validate_routable_cidr`: минимум `/8` для IPv4 и `/16` для IPv6, запрет catch-all), пишутся в дашборд токеном с правом записи только в `groups`/`ips`, а `POST /admin/v1/routes/apply` вызывает control-endpoint менеджера на RU-сервере тем же способом, что кнопка «Применить сейчас» у `/addip`.
+- `API-134` (MUST). Каждая мутация через admin API пишет запись в `audit`: время, актор (`tg:<id>` или `bot`, `dashboard`), действие, цель, результат. `GET /admin/v1/audit` отдает журнал с пагинацией (`FR-285`).
+- `API-135` (SHOULD). Для `minSupportedVersion` и массового отзыва `client-api` **SHOULD** требовать подтверждение в боте: создает pending-действие, шлет администратору сообщение с кнопкой через `POST /api/notify`, применяет после `POST /admin/v1/pending/{id}/confirm` от бота (`FR-286`).
+- `API-136` (MUST). Мутации пользователей из приложения проксируются в дашборд как источник правды и в копию `client-api` одновременно; при недоступности дашборда мутация отклоняется с понятной ошибкой, а не применяется только локально.
 
 ### 11.1. Агент провизионинга (отложено)
 
