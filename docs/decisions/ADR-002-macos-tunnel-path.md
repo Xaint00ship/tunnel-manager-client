@@ -13,6 +13,8 @@
 
 Windows-путь (ADR-001) - служба, которая владеет туннелем и правилами. Второй вариант на macOS дает ту же модель: helper владеет всем. Это упрощает контракт `NativeAdapter` и реальный паритет платформ.
 
+Что есть в `tunnel_manager` для macOS сегодня: backend на `route add/delete` через `sudo -n`, детекция интерфейса по `netstat -rn`, работа поверх системного IKEv2-профиля (`ipsec*`, `utun*`). Fail-closed на macOS там **не реализован**: `block_routes` - заглушка, blackhole есть только в Linux-backend. То есть pf-часть helper - новая работа без образца, и именно ее walking skeleton должен проверить первой.
+
 ## Решение
 
 Для 1.0 - вариант 2: userspace WireGuard на Rust внутри privileged helper через utun, fail-closed через pf в собственном якоре.

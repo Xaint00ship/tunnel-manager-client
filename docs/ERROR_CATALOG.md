@@ -49,6 +49,7 @@ runtime.route_apply
 runtime.drift_repair
 runtime.fail_closed_update
 runtime.tunnel_lost
+runtime.health_probe
 disconnect.route_remove
 disconnect.fail_closed_disable
 disconnect.tunnel_stop
@@ -85,6 +86,7 @@ update.install
 | `route_list_rejected` | error | `runtime.route_sync` | Настройки маршрутов не приняты | Автоматический повтор |
 | `route_limit_exceeded` | warning | `runtime.route_apply` | Часть маршрутов не применена | Ничего, отправляется админам как `error` |
 | `drift_repair_failed` | error | `runtime.drift_repair` | Не удается удержать настройки соединения | Переподключиться |
+| `health_rebuild_failed` | error | `runtime.health_probe` | Соединение установлено, но защищенные сервисы не отвечают | Переподключиться / Отправить ошибку |
 | `cache_hard_expired` | error | `connect.preflight` | Давно не удавалось обновить настройки, для подключения нужен интернет | Проверить интернет и повторить |
 | `client_too_old` | critical | `profile.fetch` | Нужно обновить приложение | Обновить |
 | `update_failed` | error | `update.install` | Не удалось установить обновление | Повторить / скачать вручную |
@@ -100,6 +102,7 @@ update.install
 | `backend_unreachable_short` | warning | недоступность backend короче grace-периода |
 | `route_sync_ok` | info | успешная синхронизация |
 | `drift_repaired` | info | drift починен автоматически |
+| `health_probe_failed` | warning | один мертвый цикл проб; второй подряд запускает пересборку, и только провал после пересборки становится `health_rebuild_failed` |
 | `activation_code_invalid` | warning | ошибка ввода пользователя |
 | `duplicate_report_suppressed` | info | повтор в пределах rate limit |
 
