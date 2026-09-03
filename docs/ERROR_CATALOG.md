@@ -104,6 +104,8 @@ update.install
 | `drift_repaired` | info | drift починен автоматически |
 | `health_probe_failed` | warning | один мертвый цикл проб; второй подряд запускает пересборку, и только провал после пересборки становится `health_rebuild_failed` |
 | `activation_code_invalid` | warning | ошибка ввода пользователя |
+| `authorization_pending` | info | ожидание подтверждения входа в боте |
+| `device_code_expired` | warning | пользователь не подтвердил вход в боте за 10 минут |
 | `duplicate_report_suppressed` | info | повтор в пределах rate limit |
 
 `user_cancelled_prompt` и `network_unavailable` доступны в режиме эксперта и попадают в diagnostic bundle, но не создают уведомлений.
