@@ -59,6 +59,7 @@ uninstall.cleanup
 update.check
 update.install
 helper.apply_recovery
+helper.journal
 helper.safety_valve
 ```
 
@@ -81,6 +82,8 @@ helper.safety_valve
 | `fail_closed_enable_failed` | critical | `connect.fail_closed_enable` | Не удалось включить защиту от утечек, подключение остановлено | Повторить |
 | `fail_closed_update_failed` | error | `runtime.fail_closed_update` | Защита от утечек работает не полностью | Переподключиться |
 | `fail_closed_auto_lifted` | error | `helper.safety_valve` | Защита была снята автоматически, пока приложение не работало | Подключиться заново |
+| `journal_write_failed` | critical | `helper.journal` | Не удалось сохранить состояние защиты на этом устройстве | Повторить / Отправить ошибку |
+| `rollback_failed` | critical | `helper.apply_recovery` | Не удалось вернуть прежние настройки, защита удержана | Повторить / Снять защиту |
 | `helper_not_installed` | critical | `startup.helper_verify` | Не установлен системный компонент приложения | Установить компонент |
 | `helper_broken` | critical | `startup.helper_verify` | Системный компонент поврежден | Переустановить компонент |
 | `helper_unresponsive` | error | любой | Системный компонент не отвечает | Переустановить компонент |
@@ -112,7 +115,8 @@ helper.safety_valve
 | `drift_repaired` | info | drift починен автоматически |
 | `transport_fallback` | info | переключение на следующий транспорт по политике; копится в диагностике (`FR-267`) |
 | `health_probe_failed` | warning | один мертвый цикл проб; второй подряд запускает пересборку, и только провал после пересборки становится `health_rebuild_failed` |
-| `apply_recovered` | warning | helper восстановил предыдущую конфигурацию из журнала после падения (13.6); приложение повторяет применение само |
+| `apply_recovered` | warning | helper при старте сверил журнал и восстановил блокировку (13.6); туннель поднимает приложение |
+| `fail_closed_narrow_failed` | warning | после фиксации поколения не удалось сузить блокировку; она шире нужного, сужение повторится при сверке |
 | `activation_code_invalid` | warning | ошибка ввода пользователя |
 | `authorization_pending` | info | ожидание подтверждения входа в боте |
 | `device_code_expired` | warning | пользователь не подтвердил вход в боте за 10 минут |
