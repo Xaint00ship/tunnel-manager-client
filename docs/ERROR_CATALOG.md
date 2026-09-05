@@ -51,6 +51,7 @@ runtime.drift_repair
 runtime.fail_closed_update
 runtime.tunnel_lost
 runtime.health_probe
+runtime.dns_apply
 disconnect.route_remove
 disconnect.fail_closed_disable
 disconnect.tunnel_stop
@@ -87,16 +88,16 @@ helper.safety_valve
 | `os_permission_denied` | critical | `connect.helper_install`, `connect.tunnel_start` | Система не разрешила настроить соединение | Открыть настройки системы |
 | `os_policy_blocked` | critical | `connect.tunnel_start` | Настройки системы или организации запрещают это подключение | Обратиться к администратору устройства |
 | `conflicting_network_software` | error | `connect.tunnel_start`, `connect.fail_closed_enable` | Другая программа управляет сетевыми настройками и мешает подключению | Отключить другой VPN или добавить исключение |
-| `token_revoked` | critical | `auth.refresh` | Доступ к приложению отозван | Активировать заново |
-| `subscription_expired` | error | `profile.fetch` | Подписка истекла | Продлить подписку |
+| `refresh_reuse_detected` | critical | `auth.refresh` | Доступ к приложению отозван из-за подозрительной активности | Активировать заново |
+| `dns_switch_failed` | error | `runtime.dns_apply` | Не удалось переключить DNS, защищенные сервисы могут не открываться | Переподключиться |
 | `route_list_signature_invalid` | critical | `runtime.route_sync` | Не удалось проверить подлинность настроек | Автоматический повтор |
 | `route_list_rejected` | error | `runtime.route_sync` | Настройки маршрутов не приняты | Автоматический повтор |
 | `route_limit_exceeded` | error | `runtime.route_sync` | Новые настройки маршрутов не приняты, работают предыдущие | Ничего; проблема на стороне списка |
 | `drift_repair_failed` | error | `runtime.drift_repair` | Не удается удержать настройки соединения | Переподключиться |
 | `health_rebuild_failed` | error | `runtime.health_probe` | Соединение установлено, но защищенные сервисы не отвечают | Переподключиться / Отправить ошибку |
-| `cache_hard_expired` | error | `connect.preflight` | Давно не удавалось обновить настройки, для подключения нужен интернет | Проверить интернет и повторить |
-| `client_too_old` | critical | `profile.fetch` | Нужно обновить приложение | Обновить |
 | `update_failed` | error | `update.install` | Не удалось установить обновление | Повторить / скачать вручную |
+
+Категории `route_list_signature_invalid` и `route_list_rejected` по подписи действуют с 1.1 (`FR-155`).
 
 ### 4.2. Не отправляются автоматически
 
@@ -117,6 +118,11 @@ helper.safety_valve
 | `device_code_expired` | warning | пользователь не подтвердил вход в боте за 10 минут |
 | `trial_already_used` | warning | бот отклонил повторный пробный период (`FR-272`) |
 | `admin_action_denied` | warning | вызов admin API без роли; пишется в аудит, пользователю не показывается |
+| `token_revoked` | warning | администратор отозвал устройство сам; пользователю показывается экран активации |
+| `subscription_expired` | warning | штатное событие, видно в боте; пользователю показывается `access_expired` |
+| `client_too_old` | warning | минимальную версию поднял администратор; распределение версий видно в `/clientstatus`; пользователю показывается `update_required` |
+| `cache_hard_expired` | warning | устройство долго было офлайн; пользователю показывается подсказка проверить интернет |
+| `helper_busy` | warning | helper занят другой сессией пользователя ОС (`FR-225`); показывается как статус, а не ошибка |
 | `duplicate_report_suppressed` | info | повтор в пределах rate limit |
 
 `user_cancelled_prompt` и `network_unavailable` доступны в режиме эксперта и попадают в diagnostic bundle, но не создают уведомлений.

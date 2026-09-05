@@ -23,7 +23,7 @@
 | `X-Client-Platform` | `macos-arm64` | платформа сборки: `macos-arm64`, `windows-x64`, позже `windows-arm64`, `android-arm64` |
 | `X-Device-Id` | `dev_9f3a...` | идентификатор устройства |
 | `X-Request-Id` | UUID v4 | корреляция запроса в логах |
-| `Idempotency-Key` | UUID v4 | для всех `POST` |
+| `Idempotency-Key` | UUID v4 | для мутирующих `POST` и `DELETE`; опрос `device-token` и `diagnostics` его не требуют |
 | `If-None-Match` | `"w-8421"` | условный запрос для `GET /routes` |
 
 ### 1.3. Общие поля ответа
@@ -63,7 +63,9 @@
 | 403 | `device_revoked` | как `token_revoked` |
 | 403 | `subscription_expired` | состояние `access_expired` |
 | 409 | `activation_conflict` | показать причину на экране активации |
+| 403 | `admin_required` | вызов admin API без роли; пользователю не показывается, пишется в аудит |
 | 412 | `client_too_old` | состояние `update_required` |
+| 428, 410 | `authorization_pending`, `device_code_expired` | только `device-token`, см. 2.2 |
 | 429 | `rate_limited` | уважать `retryAfterSec` |
 | 5xx | `server_error` | ретрай с backoff |
 
@@ -132,7 +134,7 @@
 | 410 | `device_code_expired` | запросить новый код |
 | 403 | `subscription_expired`, `device_limit_reached`, `user_not_found` | бот отказал; текст для пользователя в `message` |
 
-- `API-016` (MUST). Подтверждение делает бот вызовом `POST /admin/v1/device-codes/{userCode}/approve` с `userId` и `role` (`user` или `admin` по списку администраторов бота), раздел 11; `client-api` в этот момент регистрирует peer WireGuard, выдает EAP-учетку IKEv2 и отдает токены при следующем опросе.
+- `API-016` (MUST). Подтверждение делает бот вызовом `POST /admin/v1/device-codes/{userCode}/approve` с `userId` и `role` (`user` или `admin` по списку администраторов бота), раздел 11; `client-api` в этот момент регистрирует peer WireGuard, выдает EAP-учетку IKEv2 и отдает токены при следующем опросе. Роль сохраняется в записи устройства и попадает в claim `role` access token.
 - `API-017` (MUST). Пользователь, которого бот не знает, получает в боте обычный онбординг; код связки остается в ожидании до истечения, приложение показывает «дождитесь подтверждения».
 
 ### 2.3. `POST /client/v1/auth/activate`
@@ -210,7 +212,13 @@
 
 - `API-020` (MUST). Refresh token ротируется при каждом использовании, старый немедленно инвалидируется.
 - `API-021` (MUST). Повторное использование инвалидированного refresh token трактуется как компрометация: устройство отзывается, клиент получает `token_revoked`.
-- `API-022` (MUST). Backend проверяет статус подписки и устройства при каждом refresh - это основной механизм своевременного отзыва доступа.
+- `API-022` (MUST). Backend проверяет статус подписки и устройства при каждом refresh - это основной механизм своевременного отзыва доступа. Роль `admin` перепроверяется по записи устройства и переписывается в новый токен (`FR-280`).
+
+---
+
+## 3.1. `DELETE /client/v1/device`
+
+Отвязка устройства при выходе из аккаунта (`FR-173`): backend снимает peer WireGuard и EAP-учетку, инвалидирует refresh token, освобождает слот в лимите устройств. Ответ `204`. Идемпотентно: повторный вызов для уже отвязанного устройства тоже `204`. Требует `Authorization`; после ответа токены устройства недействительны.
 
 ---
 
@@ -245,7 +253,8 @@
     "maxRoutes": 10000,
     "errorReportRateLimitPerHour": 4,
     "transports": ["wireguard", "ikev2"],
-    "transportTimeoutSec": 15
+    "transportTimeoutSec": 15,
+    "safetyValveHours": 24
   },
   "serverTime": "2026-09-01T12:00:00Z",
   "minSupportedVersion": "1.2.0"
@@ -253,6 +262,7 @@
 ```
 
 `subscription.status`: `active` | `expired` | `suspended`.
+`policy.safetyValveHours`: срок предохранителя helper (`FR-197`); клиент ограничивает диапазоном 6-72.
 `device.status`: `active` | `revoked`.
 `user.role`: `user` | `admin` (`FR-280`). В пробном периоде `plan: "trial"` и `isTrial: true`.
 `policy.transports`: порядок транспортов (`FR-260`); клиент игнорирует неизвестные значения. `policy.transportTimeoutSec` ограничивается клиентом диапазоном 10-30.
@@ -458,7 +468,11 @@ Endpoint относится к релизу 1.1 (ТЗ, раздел 3.4). В 1.0
     "appliedRoutes": 486,
     "localRules": 2,
     "driftRepairs24h": 1,
-    "syncFailures24h": 0
+    "syncFailures24h": 0,
+    "transportFallbacks24h": 0,
+    "healthProbeFailures24h": 0,
+    "activeTransport": "wireguard",
+    "dnsMode": "tunnel"
   }
 }
 ```
@@ -536,7 +550,7 @@ Endpoint относится к релизу 1.1 (ТЗ, раздел 3.4). В 1.0
 Стадия: connect.tunnel_start
 Fingerprint: a1b2c3d4e5f60718
 Повторов за 6 ч: 1 · Устройств с этой ошибкой за 1 ч: 1
-Детали: админка -> Error reports -> a1b2c3d4e5f60718
+Детали: /report a1b2c3d4e5f60718
 ```
 
 - `API-089` (MUST). Сообщение **MUST NOT** содержать секреты, полный адрес endpoint, tunnel credentials и любые данные о трафике пользователя.
@@ -563,17 +577,18 @@ Admin API `client-api` имеет двух потребителей: RU-конт
 | `POST /admin/v1/device-codes/{userCode}/approve` | бот | подтвердить код связки для `userId`: сценарий deep link (`API-016`) |
 | `POST /admin/v1/activation-codes` | бот, админка | выдать код активации для ручного ввода |
 | `PUT /admin/v1/users/{userId}` | бот, админка | push статуса подписки: `enabled`, `expiresAt`, `deviceLimit` |
-| `GET /admin/v1/users/{userId}/devices` | бот, админка | устройства пользователя: платформа, версия, последний sync, возраст whitelist |
-| `DELETE /admin/v1/devices/{deviceId}` | бот, админка | отозвать устройство |
-| `GET /admin/v1/error-reports` | админка | отчеты с фильтром по fingerprint и устройству |
+| `GET /admin/v1/users/{userId}/devices` | бот (`/devices`), приложение (admin) | устройства пользователя: платформа, версия, последний sync, возраст whitelist, транспорт |
+| `DELETE /admin/v1/devices/{deviceId}` | бот, приложение (admin) | отозвать устройство |
+| `GET /admin/v1/error-reports`, `GET /admin/v1/error-reports/{fingerprint}` | бот (`/report`), приложение (admin, 1.1) | список и карточка отчета с историей повторов |
 | `GET /admin/v1/health` | вотчер бота | версия, возраст копии списка, возраст копии статусов, число peer на `wg0` |
 | `GET /admin/v1/settings`, `PUT /admin/v1/settings` | приложение (admin), бот | политика клиентов, `trialDays`, `minSupportedVersion`, порядок транспортов (`FR-281`) |
 | `GET /admin/v1/users` | приложение (admin) | список пользователей с поиском и пагинацией |
 | `POST /admin/v1/users/{userId}/extend`, `.../enable`, `.../disable` | приложение (admin) | те же действия, что в карточке бота; проксируются в дашборд как источник правды |
 | `GET /admin/v1/routes`, `POST /admin/v1/routes`, `DELETE /admin/v1/routes/{id}`, `POST /admin/v1/routes/apply` | приложение (admin), релиз 1.1 | группы и записи общего списка; запись идет в `groups`/`ips` дашборда с токеном на запись (`FR-283`) |
-| `POST /admin/v1/error-reports/{id}/resolve` | приложение (admin), релиз 1.1 | отметка «решено» |
-| `GET /admin/v1/status` | приложение (admin), релиз 1.1 | peer онлайн по транспортам, возраст копий, распределение версий |
+| `POST /admin/v1/error-reports/{fingerprint}/resolve` | бот (`/report`), приложение (admin, 1.1) | отметка «решено» |
+| `GET /admin/v1/status` | бот (`/clientstatus`), приложение (admin, 1.1) | peer онлайн по транспортам, возраст копий, распределение версий |
 | `GET /admin/v1/audit` | приложение (admin) | журнал действий администраторов |
+| `GET /admin/v1/pending`, `POST /admin/v1/pending/{id}/confirm` | бот | действия, ожидающие подтверждения администратора в Telegram (`API-135`), и ретрансляция «применить сейчас» (`API-133`) |
 
 `POST /admin/v1/activation-codes`, запрос:
 
@@ -590,7 +605,7 @@ Admin API `client-api` имеет двух потребителей: RU-конт
 `PUT /admin/v1/users/{userId}`, запрос:
 
 ```json
-{ "enabled": true, "expiresAt": "2026-10-01T00:00:00Z", "deviceLimit": 3, "displayName": "Пользователь" }
+{ "enabled": true, "expiresAt": "2026-10-01T00:00:00Z", "deviceLimit": 3, "displayName": "Пользователь", "role": "user" }
 ```
 
 Обратное направление, `client-api` -> RU-сервер:
@@ -598,14 +613,15 @@ Admin API `client-api` имеет двух потребителей: RU-конт
 | Вызов | Назначение |
 | --- | --- |
 | `GET /api/routes` с `X-Api-Key` и `If-None-Match` | список маршрутов, раз в 5 минут (`API-110`) |
-| `GET /api/tunnel/users` с сервисным токеном | сверка копии статусов раз в 15 минут (`API-111`) |
+| `GET /api/tunnel/users` с токеном `users:read` | сверка копии статусов раз в 5 минут (`API-111`) |
+| `PATCH /api/tunnel/users/{id}`, `POST .../enable`, `.../disable` с токеном `users:write` | мутации из админ-панели приложения (`API-136`) |
 | `POST /api/notify` с `X-Api-Key` | доставка actionable-ошибок в админ-чаты (`API-113`) |
 
 Требования:
 
 - `API-120` (MUST). Все вызовы admin API идемпотентны по `Idempotency-Key`; повторный `PUT` с теми же данными не создает событий.
 - `API-121` (MUST). Код активации привязан к `userId`; при активации `client-api` проверяет копию статуса пользователя и отказывает, если пользователь отключен или подписка истекла, даже если код валиден.
-- `API-122` (MUST). `GET /api/tunnel/users` сегодня доступен только под JWT администратора; для сверки дашборд **MUST** принимать сервисный токен с правами только на чтение. Это единственное изменение в `tunnel-dashboard-backend` ради клиентского контура, кроме вызовов admin API из бота и админки.
+- `API-122` (MUST). Endpoints пользователей дашборда сегодня доступны только под JWT администратора. Единственное изменение в `tunnel-dashboard-backend` ради клиентского контура - сервисные токены со scope (`users:read`, `users:write`, позже `routes:write`) для этих endpoints, по образцу существующего `X-Api-Key` для `/api/routes` и `/api/notify`. Фронтенд дашборда не меняется.
 - `API-123` (MUST). Бот получает обработку `/start link_<код>` для сценария deep link (проверка пользователя и подписки, при необходимости обычный онбординг, затем `approve`) и кнопку «Активировать приложение» в меню пользователя и в карточке администратора для ручного кода. Обе ведут в admin API; логику кодов бот не дублирует.
 - `API-124` (MUST). Если `client-api` недоступен для бота, бот честно сообщает об этом, а не выдает код из собственного генератора.
 
@@ -638,9 +654,9 @@ Admin API `client-api` имеет двух потребителей: RU-конт
 - `API-130` (MUST). Все `admin/v1/*` для приложения требуют access token с ролью `admin`; роль проверяется на сервере при каждом запросе (`FR-280`). Бот и админка ходят по своему токену, приложение - по пользовательскому токену с ролью.
 - `API-131` (MUST). `PUT /admin/v1/settings` валидирует каждое поле теми же границами, что клиент (`API-031`), и отклоняет весь запрос при одной невалидной настройке. Ответ содержит `updatedAt` и `updatedBy`.
 - `API-132` (MUST). Бот читает `trialDays` из `GET /admin/v1/settings` при создании пробной подписки; при недоступности `client-api` использует `tunnel_trial_days` из `.env` (`FR-271`).
-- `API-133` (MUST). Правки списка проходят те же guardrails, что `/addip` бота (`validate_routable_cidr`: минимум `/8` для IPv4 и `/16` для IPv6, запрет catch-all), пишутся в дашборд токеном с правом записи только в `groups`/`ips`, а `POST /admin/v1/routes/apply` вызывает control-endpoint менеджера на RU-сервере тем же способом, что кнопка «Применить сейчас» у `/addip`.
+- `API-133` (MUST). Правки списка проходят те же guardrails, что `/addip` бота (`validate_routable_cidr`: минимум `/8` для IPv4 и `/16` для IPv6, запрет catch-all), пишутся в дашборд токеном `routes:write`. «Применить сейчас» на RU-сервере ретранслируется через бота: control-endpoint менеджера слушает только loopback, и `client-api` до него не достает; `client-api` кладет запрос в `GET /admin/v1/pending`, бот забирает его и вызывает `/refresh` сам. Все это - 1.1 вместе с `FR-283`.
 - `API-134` (MUST). Каждая мутация через admin API пишет запись в `audit`: время, актор (`tg:<id>` или `bot`, `dashboard`), действие, цель, результат. `GET /admin/v1/audit` отдает журнал с пагинацией (`FR-285`).
-- `API-135` (SHOULD). Для `minSupportedVersion` и массового отзыва `client-api` **SHOULD** требовать подтверждение в боте: создает pending-действие, шлет администратору сообщение с кнопкой через `POST /api/notify`, применяет после `POST /admin/v1/pending/{id}/confirm` от бота (`FR-286`).
+- `API-135` (SHOULD). Для `minSupportedVersion` и массового отзыва `client-api` **SHOULD** требовать подтверждение в боте: создает pending-действие и кладет его в `GET /admin/v1/pending`; бот опрашивает очередь раз в минуту, сам шлет администратору сообщение с кнопкой подтверждения (у `/api/notify` кнопок нет) и после нажатия вызывает `POST /admin/v1/pending/{id}/confirm` (`FR-286`). Неподтвержденное действие истекает через 10 минут.
 - `API-136` (MUST). Мутации пользователей из приложения проксируются в дашборд как источник правды и в копию `client-api` одновременно; при недоступности дашборда мутация отклоняется с понятной ошибкой, а не применяется только локально.
 
 ### 11.1. Агент провизионинга (отложено)
