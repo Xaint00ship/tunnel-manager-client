@@ -84,6 +84,7 @@ helper.safety_valve
 | `fail_closed_auto_lifted` | error | `helper.safety_valve` | Защита была снята автоматически, пока приложение не работало | Подключиться заново |
 | `journal_write_failed` | critical | `helper.journal` | Не удалось сохранить состояние защиты на этом устройстве | Повторить / Отправить ошибку |
 | `rollback_failed` | critical | `helper.apply_recovery` | Не удалось вернуть прежние настройки, защита удержана | Повторить / Снять защиту |
+| `fail_closed_restore_failed` | critical | `helper.apply_recovery` | После перезапуска не удалось восстановить защиту, защищенные сервисы не защищены | Повторить / Отправить ошибку |
 | `helper_not_installed` | critical | `startup.helper_verify` | Не установлен системный компонент приложения | Установить компонент |
 | `helper_broken` | critical | `startup.helper_verify` | Системный компонент поврежден | Переустановить компонент |
 | `helper_unresponsive` | error | любой | Системный компонент не отвечает | Переустановить компонент |
