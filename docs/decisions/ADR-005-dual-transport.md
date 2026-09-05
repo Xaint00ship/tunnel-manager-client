@@ -26,7 +26,7 @@ ADR-001 выбрал WireGuard единственным транспортом �
 - режим эксперта дает ручной выбор: авто, только WireGuard, только IKEv2;
 - переключение - событие диагностики, не ошибка; админ видит в счетчиках, в каких сетях WireGuard блокируют.
 
-Учетные данные IKEv2: per device, выдаются `client-api` при активации и передаются один раз; на клиенте хранятся в OS keystore; на сервере применяются логикой `bot/tunnel_helpers.py` (`ipsec.secrets`, `rereadsecrets`, `ipsec down` при отзыве). Отзыв устройства снимает и peer WireGuard, и EAP-учетку.
+Учетные данные IKEv2: per device, выдаются `client-api` при активации и приходят в `GET /client/v1/endpoint`, пока клиент не подтвердит сохранение (`API-058`), ротация - `rotate-ikev2` (`API-058a`); на клиенте хранятся в OS keystore; на сервере применяются логикой `bot/tunnel_helpers.py` (`ipsec.secrets`, `rereadsecrets`, `ipsec down` при отзыве). Отзыв устройства снимает и peer WireGuard, и EAP-учетку.
 
 Split на IKEv2: helper снимает catch-all и ставит маршруты на интерфейс туннеля по логике macOS- и Windows-backend `tunnel_manager`; watchdog считает вернувшийся catch-all drift. Серверные traffic selectors как оптимизация - после 1.0 (OQ-11).
 
@@ -34,13 +34,13 @@ Split на IKEv2: helper снимает catch-all и ставит маршрут
 
 Платформы:
 
-- Windows: RAS-подключение из службы через RAS API со split tunneling и EAP-MSCHAPv2, маршруты на RAS-интерфейс через netsh. Проверенный путь, `tunnel_manager` работает поверх него сегодня.
+- Windows: RAS-подключение из службы через RAS API со split tunneling и EAP-MSCHAPv2, маршруты на RAS-интерфейс через системные API (IP Helper), как и для WireGuard; `netsh` допустим только на прототипе и заменяется до релиза (ТЗ 19.2). Сам путь проверенный: `tunnel_manager` работает поверх RAS сегодня.
 - macOS: Personal VPN (`NEVPNManager`, `NEVPNProtocolIKEv2`) через Swift-мост, entitlement Personal VPN и provisioning profile; helper снимает catch-all и ставит маршруты на `ipsecN`. Запасной путь - системный профиль IKEv2, которым helper управляет через `scutil --nc`, если entitlement или сборка Tauri с NetworkExtension окажутся проблемой (риск R20).
 
 ## Следствия
 
 - Native-работа удваивается: два драйвера на каждой ОС. Walking skeleton в фазе 1 делает WireGuard первым и IKEv2 вторым, срок фазы 4-6 недель вместо 3-4 (риск R19).
-- На macOS появляется Swift-код, чего ADR-002 стремился избежать. Он ограничен мостом к `NEVPNManager` и не затрагивает WireGuard-путь.
+- На macOS появляется Swift-код, чего ADR-002 стремился избежать. Он ограничен мостом к `NEVPNManager` и не затрагивает WireGuard-путь; следствие ADR-002 «native-слой полностью на Rust» с этого момента относится только к WireGuard, что отмечено в самом ADR-002.
 - Appendix B ТЗ: снятие catch-all и детекция интерфейса из `tunnel_manager` переносятся, но только для IKEv2.
 - Leak-тесты и матрица M3-M9 выполняются на каждом транспорте; добавлены M16 и M17.
 - `GET /client/v1/endpoint` отдает массив `transports`; `AllowedIPs` WireGuard и маршруты IKEv2 строятся из одного route list.
