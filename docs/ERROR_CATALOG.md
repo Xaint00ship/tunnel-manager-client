@@ -57,6 +57,8 @@ disconnect.tunnel_stop
 uninstall.cleanup
 update.check
 update.install
+helper.apply_recovery
+helper.safety_valve
 ```
 
 ---
@@ -77,6 +79,7 @@ update.install
 | `route_remove_failed` | error | `disconnect.route_remove` | Не удалось убрать настройки соединения | Повторить |
 | `fail_closed_enable_failed` | critical | `connect.fail_closed_enable` | Не удалось включить защиту от утечек, подключение остановлено | Повторить |
 | `fail_closed_update_failed` | error | `runtime.fail_closed_update` | Защита от утечек работает не полностью | Переподключиться |
+| `fail_closed_auto_lifted` | error | `helper.safety_valve` | Защита была снята автоматически, пока приложение не работало | Подключиться заново |
 | `helper_not_installed` | critical | `startup.helper_verify` | Не установлен системный компонент приложения | Установить компонент |
 | `helper_broken` | critical | `startup.helper_verify` | Системный компонент поврежден | Переустановить компонент |
 | `helper_unresponsive` | error | любой | Системный компонент не отвечает | Переустановить компонент |
@@ -88,7 +91,7 @@ update.install
 | `subscription_expired` | error | `profile.fetch` | Подписка истекла | Продлить подписку |
 | `route_list_signature_invalid` | critical | `runtime.route_sync` | Не удалось проверить подлинность настроек | Автоматический повтор |
 | `route_list_rejected` | error | `runtime.route_sync` | Настройки маршрутов не приняты | Автоматический повтор |
-| `route_limit_exceeded` | warning | `runtime.route_apply` | Часть маршрутов не применена | Ничего, отправляется админам как `error` |
+| `route_limit_exceeded` | error | `runtime.route_sync` | Новые настройки маршрутов не приняты, работают предыдущие | Ничего; проблема на стороне списка |
 | `drift_repair_failed` | error | `runtime.drift_repair` | Не удается удержать настройки соединения | Переподключиться |
 | `health_rebuild_failed` | error | `runtime.health_probe` | Соединение установлено, но защищенные сервисы не отвечают | Переподключиться / Отправить ошибку |
 | `cache_hard_expired` | error | `connect.preflight` | Давно не удавалось обновить настройки, для подключения нужен интернет | Проверить интернет и повторить |
@@ -108,6 +111,7 @@ update.install
 | `drift_repaired` | info | drift починен автоматически |
 | `transport_fallback` | info | переключение на следующий транспорт по политике; копится в диагностике (`FR-267`) |
 | `health_probe_failed` | warning | один мертвый цикл проб; второй подряд запускает пересборку, и только провал после пересборки становится `health_rebuild_failed` |
+| `apply_recovered` | warning | helper восстановил предыдущую конфигурацию из журнала после падения (13.6); приложение повторяет применение само |
 | `activation_code_invalid` | warning | ошибка ввода пользователя |
 | `authorization_pending` | info | ожидание подтверждения входа в боте |
 | `device_code_expired` | warning | пользователь не подтвердил вход в боте за 10 минут |
@@ -261,7 +265,7 @@ Redaction работает в два слоя.
 | --- | --- | --- |
 | все `critical` из раздела 4.1 | да | да, всегда для нового fingerprint |
 | все `error` из раздела 4.1 | да, с rate limit | да, если fingerprint новый в окне 6 часов |
-| `route_limit_exceeded` | да | да, как `error`, потому что это проблема route list |
+| `route_limit_exceeded` | да | да: это проблема route list, клиент остался на предыдущем |
 | `warning` из раздела 4.2 | нет | нет |
 | `info` | нет | нет |
 | любой отчет с `manual: true` | да | да, даже если fingerprint известен |
