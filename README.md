@@ -85,4 +85,5 @@ Tunnel Manager Client - кроссплатформенное клиентско�
 - [Каталог ошибок и правила отчетов](docs/ERROR_CATALOG.md) - категории, fingerprint, redaction, rate limit
 - [Дорожная карта](docs/ROADMAP.md)
 - [Decision records](docs/decisions/) - транспорт, путь на macOS, список и DNS, размещение control plane, второй транспорт IKEv2
-- [Проверки документации](docs/reviews/) - аудит 2026-09-06 и статус замечаний
+- [Повторная проверка готовности к реализации](docs/reviews/2026-09-07-implementation-readiness.md) - восемь уточнений контрактов, принятые исправления и сценарии проверки
+- [Проверки документации](docs/reviews/) - исходный аудит 2026-09-06 и история последующих проверок

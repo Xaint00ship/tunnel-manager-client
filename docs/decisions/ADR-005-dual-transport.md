@@ -43,7 +43,7 @@ Split на IKEv2: helper снимает catch-all и ставит маршрут
 - На macOS появляется Swift-код, чего ADR-002 стремился избежать. Он ограничен мостом к `NEVPNManager` и не затрагивает WireGuard-путь; следствие ADR-002 «native-слой полностью на Rust» с этого момента относится только к WireGuard, что отмечено в самом ADR-002.
 - Appendix B ТЗ: снятие catch-all и детекция интерфейса из `tunnel_manager` переносятся, но только для IKEv2.
 - Leak-тесты и матрица M3-M9 выполняются на каждом транспорте; добавлены M16 и M17.
-- `GET /client/v1/endpoint` отдает массив `transports`; `AllowedIPs` WireGuard и маршруты IKEv2 строятся из одного route list.
+- `GET /client/v1/endpoint` отдает массив `transports`; WireGuard и IKEv2 используют один route list, дополненный служебными адресами по ТЗ 10.7. Для WireGuard обязательна явная серверная цель `probeAddress` (`API-056a`), не вычисляемая из адреса устройства и не зависящая от DNS-режима. Выключение fail-closed не удаляет маршруты и не меняет `AllowedIPs`.
 
 ## Альтернативы
 
