@@ -1,0 +1,301 @@
+# magnetgate
+
+> A censorship-resistant tunnel with **no broker and a rendezvous that has no fixed address**: the
+> client finds the exit on its own over two independent channels, then connects through a camouflaged
+> data plane. The exit itself is still one address and one port — see below.
+
+**RU:** [README.ru.md](README.ru.md)
+
+**0.11 migration:** native sessions and sealed rendezvous envelopes now use wire version 4.
+Update clients and exits together; older releases cannot discover the new envelopes.
+Node.js 20.19+ is required (22.12+ to build the desktop app). Run `npm test` before rollout.
+The optional desktop firewall guard still needs an elevated Windows failure/recovery field test;
+`strict_route` alone does not protect traffic after the engine exits.
+
+An exit node publishes a signed and encrypted **offer** into public infrastructure; a client
+discovers it from a shared secret (PSK) and connects — preferring a strongly camouflaged data plane
+(Reality / hysteria2) and falling back to magnetgate's own forward-secret channel. There is no
+centralized broker: rendezvous rides the BitTorrent Mainline DHT **and** a pool of Nostr relays, and
+the data plane looks like ordinary TLS / QUIC to a real website.
+
+**What that does and does not mean.** Nothing in the *rendezvous* is a fixed address a censor can
+simply block, and no third party sits in the middle. The *exit* itself is still one `host:port`:
+credential rotation makes it look new on the wire, but it does not move it, so an address-level block
+is a hard stop until the exit overlay (entry/egress split, `ROADMAP.md` §4) lands. Treat this as a
+tool for a small trusted group, not as anonymity infrastructure — see "Known limitations" below.
+
+## How it works
+
+```
+Application ─▶ SOCKS5 127.0.0.1:1080  (magnetgate client, split-tunnel rules: direct vs proxy)
+                    │
+                    ▼   data plane, chosen per connection with automatic fail-over:
+   ┌─ Reality (VLESS+Reality, TCP/443)  ─┐
+   ├─ hysteria2 (QUIC, UDP/443)          ─┼─▶ sing-box ─▶ exit ─▶ CONNECT host:port ─▶ target
+   └─ native mgt (forward-secret mux)    ─┘   (native rides exit :49001)
+
+Rendezvous — how the client learns the exit + its current endpoints — over TWO independent channels:
+   Mainline DHT (BEP 44, mutable, ed25519)   +   Nostr relays (kind 30078, secp256k1)
+   the exit publishes one signed+encrypted offer (a list of data-plane endpoints) to both
+```
+
+All keys are derived deterministically from the PSK (`mgt-sig:` / `mgt-salt:` / `mgt-box:` /
+`mgt-nostr:`), so no domains, certificates, trackers or brokers are required. The offer is sealed
+with a secretbox under the PSK (only PSK holders can read or forge it). magnetgate's **native**
+channel adds a forward-secret handshake (ephemeral X25519 authenticated under the PSK, replay-
+protected), so a later PSK compromise does not decrypt past recorded native traffic; Reality and
+hysteria2 bring their own well-studied camouflage and transport.
+
+## Data planes
+
+The offer advertises a list (`dp`) of data-plane endpoints. The client picks by preference and
+fails over on error:
+
+| Plane | Transport | Role | Notes |
+|---|---|---|---|
+| **Reality** | VLESS+Reality over TLS 1.3 (TCP/443) | primary | borrows a real site's TLS handshake (SNI); best against SNI/DPI |
+| **hysteria2** | QUIC (UDP/443) + salamander obfs | alternative | great on lossy/mobile links; server cert pinned via the Nostr offer |
+| **native `mgt`** | AEAD-framed mux over TCP (or reliable-UDP) on :49001 | fallback | forward-secret, no third-party binary, always available |
+
+Reality and hysteria2 are run by a **bundled sing-box** on the client (`scripts/get-singbox.ps1`,
+pinned SHA-256); magnetgate templates its config from the offer, supervises the process and routes
+proxied connections through it. `MAGNETGATE_DATA_PLANE=mgt` forces the native channel only.
+
+## Quick start
+
+**Exit (a VPS with a public IPv4):**
+```bash
+# 1) magnetgate rendezvous + native channel (unprivileged, systemd units in systemd/)
+npm ci
+MAGNETGATE_PSK='<psk>' MAGNETGATE_PORT=49001 MAGNETGATE_PUBLIC_HOST=<PUBLIC_IP> \
+MAGNETGATE_SEQ_FILE=/var/lib/magnetgate/seq \
+DHT_BOOTSTRAP=127.0.0.1:20001,router.bittorrent.com:6881 node src/exit.js
+
+# 2) Reality + hysteria2 data planes (sing-box) — one-time setup, then daily credential rotation
+MAGNETGATE_PUBLIC_HOST=<PUBLIC_IP> bash scripts/setup-singbox.sh
+```
+
+**Client (local machine):**
+```powershell
+npm ci
+powershell -ExecutionPolicy Bypass -File scripts\get-singbox.ps1   # fetch the sing-box data-plane engine
+node src/client.js .\magnetgate.config.json                        # or: node src/client.js "<psk>" 1080
+```
+
+**Verify:**
+```powershell
+curl.exe --socks5-hostname 127.0.0.1:1080 http://checkip.amazonaws.com/   # → exit IP
+curl.exe --socks5-hostname 127.0.0.1:1080 https://www.youtube.com/robots.txt
+```
+
+Browser: SwitchyOmega / FoxyProxy → SOCKS5 `127.0.0.1:1080`. DNS is resolved at the exit (SOCKS5
+hostnames), so local resolver poisoning is excluded.
+
+**Desktop app (optional):** [`app/`](app/) is an Electron GUI that runs the client, toggles the
+system-wide VPN, shows status (route + egress IP), and manages the PSK/exits — build a portable `.exe`
+with `cd app && npm install && npm run dist`. See [app/README.md](app/README.md).
+
+## Rendezvous (two channels)
+
+The exit publishes a sealed offer to both channels — the same generation and `ts`, but not byte
+identical: the DHT view is compact (it drops the hysteria2 endpoint, whose pinned certificate would
+not fit the ~1000 B BEP 44 limit) while the Nostr view carries it. Clients merge the two by data-plane
+type. Discovery therefore survives either channel being blocked or shaped:
+
+- **Mainline DHT (BEP 44)** — a mutable item keyed by a PSK-derived ed25519 key; republished every
+  60 s. Lead `DHT_BOOTSTRAP` with an IPv4 node (some public bootstraps are IPv6-only and
+  bittorrent-dht is udp4); a self-hosted bootstrap on the exit (`:20001`) is the most reliable.
+- **Nostr relays** — a parameterized-replaceable event (kind 30078) under a PSK-derived secp256k1
+  key, delivered push + instantly to new subscribers. Override the pool with `MAGNETGATE_NOSTR_RELAYS`,
+  disable with `MAGNETGATE_NOSTR=off`.
+
+## Split tunneling
+
+`MAGNETGATE_RULES=path/to/rules.json` (or `rules` in the client config):
+```json
+{ "direct": ["ru", "*.local"], "proxy": [] }
+```
+If `direct` is non-empty, everything that does not match goes through the tunnel; if a non-empty
+`proxy` is given instead, only listed domains go through the tunnel and the rest goes direct.
+
+## Environment variables
+
+| Variable | Meaning |
+|---|---|
+| `MAGNETGATE_PSK` | exit PSK, read from the env so it never lands on the argv/`ps` line (argv is a fallback) |
+| `MAGNETGATE_PORT` / `MAGNETGATE_PUBLIC_HOST` | exit native-channel port and the public host advertised in the offer |
+| `MAGNETGATE_NODE_SLOT` / `MAGNETGATE_NODE_NAME` | exit: which rendezvous slot this node occupies (default `0` = the single-node layout) and the name it advertises; two nodes share one PSK by taking different slots |
+| `MAGNETGATE_NODE_COUNTRY` | exit: optional two-letter country code (e.g. `NL`, `FI`) advertised in the offer. The client shows the codes it can see in a selector and can restrict itself to one country — an address is never shown. Unset means the node just does not appear in that list |
+| `MAGNETGATE_SLOTS` | client: comma-separated slots to look for, e.g. `0,1` — one PSK then finds every node in the set (same as `slots` in the config file) |
+| `MAGNETGATE_PEER_SLOTS` | exit: slots this node watches and advertises in `peers`, e.g. `0,1`; unset means no scanning, and a client that knows one slot can then learn the rest by itself |
+| `MAGNETGATE_EXPECT_PEERS` | exit: log an `[alert]` when fewer than N peer slots answer (unset = never) |
+| `MAGNETGATE_PEER_ALERT_AFTER` | exit: how many consecutive misses are needed before that alert (default 3; a single DHT lookup can come back empty for a live node) |
+| `MAGNETGATE_SLOT_DISCOVERY` | client: `0` stops taking extra slots from a node's `peers` list (they are logged when taken) |
+| `MAGNETGATE_PUBLISH_MS` | exit: republish cadence (default 60000); lower it only for tests |
+| `DHT_BOOTSTRAP` | CSV bootstrap list; **lead with an IPv4 node**, self-hosted `:20001` recommended |
+| `MAGNETGATE_SEQ_FILE` | durable sequence reservation before publication; one publisher per file (systemd holds `flock`). Offer nonces are independently random. |
+| `MAGNETGATE_NOSTR` / `MAGNETGATE_NOSTR_RELAYS` | disable the Nostr rendezvous channel / override its relay pool |
+| `MAGNETGATE_DATA_PLANE` | client: `auto` (default — prefer Reality/hysteria2, else native) or `mgt` (native only) |
+| `MAGNETGATE_RULES` | split-tunnel rules file (client) |
+| `MAGNETGATE_SOCKS_HOST` | client SOCKS5 bind address (default `127.0.0.1`; do not expose it to the LAN) |
+| `MAGNETGATE_ALLOW_PRIVATE` | exit: `1` allows CONNECT to loopback/link-local/RFC1918 (blocked by default — SSRF guard) |
+| `MAGNETGATE_MAX_SESSIONS` / `MAGNETGATE_MAX_STREAMS` | exit resource caps (default 512 / 256 per session) |
+| `MAGNETGATE_UDP_IDLE_MS` | exit: drop a reliable-UDP stream after this much silence (default 600000); a vanishing peer otherwise holds a slot forever |
+| `MAGNETGATE_HEALTH_FILE` | exit: write publication health (last put, node count, consecutive failures) to this file |
+| `MAGNETGATE_ALERT_AFTER` | exit: warn after N consecutive publications that reached no DHT node (default 5) |
+| `MAGNETGATE_ALERT_WEBHOOK` | exit: POST `{"text": ...}` to this endpoint when the publication health check fails, and once when it recovers |
+| `MAGNETGATE_ALERT_TG_TOKEN` / `MAGNETGATE_ALERT_TG_CHAT` | exit: send those notifications to Telegram instead (or as well) |
+| `MAGNETGATE_ALERT_COOLDOWN_MIN` | exit: how often a still-broken exit may repeat its alert (default 30) |
+| `MAGNETGATE_TRANSPORT` | native channel: `tcp` (default) or `udp` (experimental reliable-UDP) |
+| `MAGNETGATE_REALITY_SNI` | exit: the site whose TLS Reality borrows (default `www.microsoft.com`) |
+| `MAGNETGATE_STATS` | client: log per-exit traffic counters every N seconds |
+| `MAGNETGATE_LOG_TARGETS` | client: `1` logs full destination host names; by default only an 8-hex fingerprint is logged, so a log file is not a browsing history |
+
+## Configuration and autostart
+
+Client config (`magnetgate.config.json`, see `magnetgate.config.example.json`):
+```json
+{
+  "localPort": 1080,
+  "dataPlane": "auto",
+  "bootstrap": ["<exit-ip>:20001", "router.bittorrent.com:6881"],
+  "rules": { "direct": ["ru"], "proxy": [] },
+  "exits": [
+    { "name": "nl", "psk": "<psk>" },
+    { "name": "backup", "psk": "<other-psk>" }
+  ]
+}
+```
+Multiple exits: the client discovers every exit's offer, spreads streams round-robin, and fails over
+to a healthy exit automatically (dead exits get a 30 s cooldown).
+
+Windows autostart (scheduled task at logon):
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-client-windows.ps1 -ConfigPath .\magnetgate.config.json
+```
+Linux autostart: `scripts/magnetgate-client.service` (systemd unit template).
+
+## Credential rotation
+
+`scripts/rotate-dp.mjs` (daily systemd timer, installed by `setup-singbox.sh`) rotates the Reality
+shortId+uuid and the hysteria2 password, keeping the previous generation valid for one interval
+(**grace window**) while preserving the stable Reality keypair / hy2 obfs / cert (so a client's
+pinned key stays valid). The exit watches the dp file and republishes within ~1 s, so clients pick
+up new credentials in seconds; the client switches sing-box to the new params cleanly and falls back
+to the native channel during any gap. Trigger manually: `systemctl start magnetgate-rotate.service`.
+
+## System-wide VPN mode (Windows)
+
+The SOCKS5 client is the data plane; to route **all system traffic** through it,
+[tun2proxy](https://github.com/tun2proxy/tun2proxy) creates a TUN adapter and feeds everything into
+`127.0.0.1:1080` (DNS resolved at the exit). The exit IP is auto-bypassed so the client's own uplink
+is not captured:
+
+```powershell
+# from an elevated PowerShell
+powershell -ExecutionPolicy Bypass -File scripts\vpn-windows.ps1        # connect (downloads tun2proxy, pinned)
+powershell -ExecutionPolicy Bypass -File scripts\vpn-windows.ps1 -Off   # disconnect
+```
+> The desktop app manages sing-box TUN directly and retains native fallback. Full mode supports
+> direct exceptions; Split routes only selected resources. The optional strict Full guard disables
+> exceptions and persists after engine/app termination until explicit Disconnect. The legacy
+> PowerShell launchers do not provide a persistent firewall guard. See [app/README.md](app/README.md).
+
+## Deployment (pull-based autodeploy)
+
+The VPS pulls `main` from GitHub by itself (no GitHub Actions, no open webhook port):
+```bash
+# one-time bootstrap on the VPS (repo root == /opt/magnetgate)
+git init && git remote add origin https://github.com/danifest751/magnetgate.git
+git fetch origin && git checkout -f -B main origin/main
+
+# unprivileged service user + state dir + secrets/config file (never in git)
+useradd --system --no-create-home --shell /usr/sbin/nologin magnetgate
+install -d -o magnetgate -g magnetgate -m 750 /var/lib/magnetgate
+umask 077 && cat > /etc/magnetgate.env <<'ENV'
+PSK=<your-128-bit-psk>
+MAGNETGATE_PORT=49001
+MAGNETGATE_PUBLIC_HOST=<PUBLIC_IP>
+DHT_BOOTSTRAP=127.0.0.1:20001,router.bittorrent.com:6881
+ENV
+chown root:magnetgate /etc/magnetgate.env && chmod 640 /etc/magnetgate.env
+
+cp systemd/*.service systemd/*.timer /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now magnetgate-exit magnetgate-dht magnetgate-health.timer magnetgate-deploy.timer
+
+# data planes (Reality + hysteria2 + daily rotation):
+MAGNETGATE_PUBLIC_HOST=<PUBLIC_IP> bash scripts/setup-singbox.sh
+```
+
+`magnetgate-deploy.timer` runs `scripts/deploy.sh` every 3 minutes: fetch → hard reset to
+`origin/main` → `npm ci` (only when the lockfile changed) → copy changed units → restart services.
+The exit, DHT and sing-box run as unprivileged users under systemd sandboxes (`NoNewPrivileges`,
+`ProtectSystem=strict`, dropped capabilities). Create `/opt/magnetgate/.deploy-verify` to require a
+signed commit (`git verify-commit`) before running new code as root. (Deploy restarts only the
+magnetgate exit/DHT; sing-box is untouched, so Reality/hysteria2 sessions survive updates.)
+
+## Documentation
+
+Design notes, the implementation spec, the testing methodology and the research survey (with the
+2026 build plan) live in the internal `docs/` directory, kept out of the public repository.
+Field test reports are kept internal, outside the repository. Unit tests: `npm test` (node:test).
+Commit conventions: [CONTRIBUTING.md](CONTRIBUTING.md) (Conventional Commits, English-only,
+enforced by a `commit-msg` hook).
+
+## Status
+
+Implemented and tested in production:
+
+- **Rendezvous** over two independent channels — Mainline DHT (BEP 44) + Nostr — with automatic
+  merge/fail-over; offers signed + encrypted under the PSK.
+- **Data planes** — Reality (primary) and hysteria2 (alternative) via a bundled sing-box, with the
+  native forward-secret multiplexed channel as the always-available fallback; per-connection
+  selection and fail-over.
+- **Credential rotation** with a grace window and ~1 s propagation.
+- **Hardening** — exit/DHT/sing-box run unprivileged under systemd sandboxes; the PSK never appears
+  on the process command line; the exit blocks egress to loopback/link-local/RFC1918 (SSRF guard)
+  and caps concurrent sessions/streams; the SOCKS listener is loopback-only; downloaded binaries are
+  pinned by SHA-256; `npm ci` for reproducible installs. Every downloaded or bundled third-party
+artifact (sing-box, wintun, tun2proxy, the routing rule-sets) is pinned in `scripts/pins.json`,
+which the fetch scripts read — so a changed upstream file stops the fetch instead of silently
+retuning routes. `scripts/check-hygiene.mjs` (wired into a pre-commit hook) refuses to commit
+private keys, tokens, field reports or real host addresses.
+
+Known limitations: obfuscation of the native channel is at PoC level, and the DHT platform sees put/get
+participants' IPs like any BitTorrent node. The rendezvous target is derived from the PSK, so anyone
+who holds — or brute-forces a weak — PSK can locate the exit: **use a ≥128-bit random PSK.**
+
+## Roadmap
+
+> Full detail, including the **exit-overlay (entry/egress split)** design, is in [ROADMAP.md](ROADMAP.md).
+
+**Phase 3:**
+- ✅ **hy2 cert-pinning** — the server cert now ships via the size-unbounded Nostr offer (DHT offer
+  compact, both sealed under disjoint nonces), dropping the `insecure` fallback for hysteria2.
+- **sing-box TUN desktop** is implemented; persistent firewall failure/recovery testing remains.
+
+**After Phase 3:**
+- **WebRTC DataChannel data plane** (coturn on the exit; DTLS looks like a video call; built-in NAT
+  traversal) as another `dp` type — direct P2P without a fixed data port.
+- **A third rendezvous channel** — a DoH / ENS dead-drop as a tertiary discovery path, so Layer 1
+  has ≥3 independent mechanisms.
+- **Multi-exit fan-out** — several exits, each rotating Reality/hysteria2; the client load-balances
+  and fails over across them.
+- **Multipath aggregation** — carry one session across several data planes at once (MPTCP-style), so
+  blocking one degrades throughput instead of dropping the session.
+- **Cold-fallback tier** — email/IMAP store-and-forward for total-shutdown scenarios.
+- **Cross-platform clients** — Linux/macOS/Android (sing-box is cross-platform) packaged as a
+  service, plus automated exit provisioning and health/metrics.
+
+## Disclaimer
+
+This software is provided for research and educational purposes, "as is", without warranty of any
+kind (see [LICENSE](LICENSE)). The authors are not affiliated with any platform or service, do not
+provide legal advice, and do not encourage the violation of any laws. You are solely responsible for
+complying with the laws of your jurisdiction — including, where applicable, restrictions on the use
+and promotion of circumvention tools. Do not use this software for unlawful purposes or to harm
+others. The authors assume no liability for any misuse by third parties.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

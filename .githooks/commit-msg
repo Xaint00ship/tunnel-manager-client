@@ -1,0 +1,46 @@
+#!/bin/sh
+# commit-msg hook: enforces Conventional Commits, English-only subjects.
+file="$1"
+
+# take the first non-comment line (the subject)
+subject=$(grep -m1 -v '^#' "$file" | sed 's/[[:space:]]*$//')
+
+# empty subject
+if [ -z "$subject" ]; then
+  echo "commit rejected: empty subject" >&2
+  exit 1
+fi
+
+# Conventional Commits pattern: type(scope)!: subject
+pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9/_-]+\))?!?: .+'
+if ! printf '%s\n' "$subject" | grep -Eq "$pattern"; then
+  echo "commit rejected: subject does not follow Conventional Commits" >&2
+  echo "  expected: <type>(<scope>): <subject>" >&2
+  echo "  types: feat fix docs style refactor perf test build ci chore revert" >&2
+  echo "  got: \"$subject\"" >&2
+  exit 1
+fi
+
+# english-only subject (no cyrillic)
+if printf '%s\n' "$subject" | grep -q '[А-Яа-яЁё]'; then
+  echo "commit rejected: subject must be english only" >&2
+  echo "  got: \"$subject\"" >&2
+  exit 1
+fi
+
+# subject length: allow type+scope overhead, hard-limit the subject part at 72
+subj_len=$(printf '%s' "$subject" | wc -m)
+if [ "$subj_len" -gt 72 ]; then
+  echo "commit rejected: subject too long ($subj_len chars, keep <= 72)" >&2
+  exit 1
+fi
+
+# secrets guard: never commit the key directory, obvious credentials or field test reports
+if git diff --cached --name-only | grep -qiE '(^key/|\.pem$|\.ppk$|\.p12$|\.pfx$|/\.env($|\.)|access\.txt$|^tests/results[a-z.]*\.md$|vps-psk|TG\.txt|oflx_key)'; then
+  echo "commit rejected: credentials, key material or a field test report in the changeset" >&2
+  echo "  (content-level check: scripts/check-hygiene.mjs via the pre-commit hook)" >&2
+  git diff --cached --name-only | grep -iE '(^key/|\.pem$|\.ppk$|\.p12$|\.pfx$|/\.env($|\.)|access\.txt$|^tests/results[a-z.]*\.md$|vps-psk|TG\.txt|oflx_key)' >&2
+  exit 1
+fi
+
+exit 0
