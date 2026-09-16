@@ -1,4 +1,4 @@
-# Tunnel Manager Client
+# Tunnel Manager Client macOS
 
 macOS-форк клиента на базе [`danifest751/magnetgate`](https://github.com/danifest751/magnetgate).
 Цель этого репозитория прежняя: отдельное desktop-приложение для пользователей Tunnel Manager,

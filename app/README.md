@@ -1,4 +1,4 @@
-# Tunnel Manager Client Desktop
+# Tunnel Manager Client macOS Desktop
 
 Electron desktop client forked from `magnetgate/app` and adapted for macOS-first development.
 

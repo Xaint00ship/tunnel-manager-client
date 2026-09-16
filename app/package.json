@@ -1,5 +1,5 @@
 {
-  "name": "tunnel-manager-client",
+  "name": "tunnel-manager-client-macos",
   "productName": "Tunnel Manager Client",
   "version": "0.3.3",
   "description": "macOS desktop fork of the magnetgate censorship-resistant tunnel client",
@@ -75,10 +75,10 @@
       ],
       "category": "public.app-category.utilities",
       "identity": null,
-      "artifactName": "tunnel-manager-client-${version}-${arch}.${ext}"
+      "artifactName": "tunnel-manager-client-macos-${version}-${arch}.${ext}"
     },
     "dmg": {
-      "artifactName": "tunnel-manager-client-${version}-${arch}.dmg"
+      "artifactName": "tunnel-manager-client-macos-${version}-${arch}.dmg"
     },
     "win": {
       "target": [
