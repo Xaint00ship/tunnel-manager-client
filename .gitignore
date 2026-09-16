@@ -6,6 +6,7 @@ dist/
 build/
 target/
 src-tauri/target/
+app/dist/
 
 # logs
 *.log
@@ -19,12 +20,28 @@ pnpm-debug.log*
 .env.*
 !.env.example
 *.key
+key/
 *.pem
+*.ppk
 *.p12
+*.pfx
 *.mobileconfig
+access.txt
+magnetgate.config.json
+
+# downloaded third-party binaries (sing-box, tun2proxy) — fetched with pinned checksums
+tools/
+
+# app first-run seed (may contain the PSK)
+app/seed-config.json
+
+# field test reports carry live infrastructure addresses — never publish them
+tests/results*.md
+*.bundle
 
 # os/editor
 .DS_Store
+Thumbs.db
 .idea/
 .vscode/
-
+.codegraph/

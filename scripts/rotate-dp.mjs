@@ -1,0 +1,194 @@
+#!/usr/bin/env node
+// Rotates the Reality/hysteria2 credentials on the exit, keeping the previous generation valid for
+// a grace window (one rotation interval) so clients that have not rediscovered yet keep working.
+//
+// Run it MANUALLY while the timers are held:
+//     systemctl start magnetgate-rotate.service        (one node at a time; prints nothing on success)
+//     journalctl -u magnetgate-rotate -n 20            (what happened)
+// Rotating restarts sing-box, so in-flight connections blip and reconnect; that is inherent to a
+// credential change, and every client reconnects from the rendezvous record within a poll interval.
+// Verify after each run: `systemctl is-active sing-box`, both listeners, and that a client still
+// reaches the internet — the grace slot is what keeps clients that have not rediscovered working.
+//
+// Stable identity (kept across rotations): the Reality x25519 keypair, the hy2 obfs password and the
+// hy2 TLS cert. Rotated each run: the Reality shortId + uuid and the hy2 auth password. The cert is
+// NOT touched here: if it ever has to be replaced, write the cert and the key together and then
+// restart sing-box (the file watcher can otherwise catch a mismatched pair).
+//
+// Writes /etc/sing-box/config.json (users/short_id = [new, previous]) and /etc/magnetgate-dp.json
+// (advertising only the NEW generation), validates the config, and restarts sing-box. The magnetgate
+// exit picks up the new dp file on its next publish; the client's supervisor restarts sing-box with
+// the new params when it sees the changed offer. A rotation restarts sing-box, so in-flight
+// connections blip and reconnect — keep the interval coarse (hours/daily).
+import fs from 'node:fs'
+import crypto from 'node:crypto'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { rotateTransaction, recoverRotation } from '../src/rotation.mjs'
+import { atomicWrite } from '../src/state-file.mjs'
+
+const DIR = '/etc/sing-box'
+const CFG = `${DIR}/config.json`
+const KEEP = `${DIR}/keep.json`
+const STATE = `${DIR}/rotation-state.json`
+const DP = '/etc/magnetgate-dp.json'
+const EXIT_IP = process.env.MAGNETGATE_PUBLIC_HOST
+if (!EXIT_IP) throw new Error('MAGNETGATE_PUBLIC_HOST is required')
+const SNI = process.env.MAGNETGATE_REALITY_SNI || 'www.microsoft.com'
+const HY2_CRT = `${DIR}/hy2.crt`
+// the hy2 self-signed cert's SAN (see setup-singbox.sh); clients pin the cert and verify this name
+const HY2_SNI = process.env.MAGNETGATE_HY2_SNI || 'magnetgate'
+
+const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'))
+const writeJson = (p, o) => atomicWrite(p, JSON.stringify(o, null, 2), 0o640)
+const chmodGrp = (p, grp, mode = 0o640) => {
+  execFileSync('chgrp', [grp, p])
+  fs.chmodSync(p, mode)
+}
+
+const journal = DIR + '/rotation-journal.json'
+// Kernel-owned lifetime lock is automatically released on failure/SIGKILL.
+if (process.env.MAGNETGATE_ROTATION_LOCKED !== '1') {
+  const child = spawnSync(
+    'flock',
+    ['--nonblock', DIR + '/rotation.lock', process.execPath, fileURLToPath(import.meta.url)],
+    { stdio: 'inherit', env: { ...process.env, MAGNETGATE_ROTATION_LOCKED: '1' } }
+  )
+  if (child.error) throw child.error
+  process.exit(child.status ?? 1)
+}
+const restart = () => {
+  execFileSync('systemctl', ['restart', 'sing-box'])
+  // Verify both listeners after startup has had time to settle, before advertising.
+  execFileSync(
+    process.execPath,
+    [
+      '-e',
+      "setTimeout(()=>{const s=require('net').connect(443,'127.0.0.1');s.setTimeout(3000);s.on('connect',()=>s.end());s.on('error',()=>process.exit(1));s.on('timeout',()=>process.exit(1))},2000)"
+    ],
+    { timeout: 6000 }
+  )
+  if (!execFileSync('ss', ['-H', '-l', '-u', '-n', 'sport = :443'], { encoding: 'utf8' }).trim())
+    throw new Error('hysteria2 listener not ready')
+  execFileSync('systemctl', ['is-active', '--quiet', 'sing-box'])
+}
+const write = (file, data, mode) => {
+  atomicWrite(file, data, mode)
+  chmodGrp(file, file === DP ? 'magnetgate' : 'sing-box', mode)
+}
+recoverRotation({ journal, restart, write })
+
+// stable identity — migrate from the existing config/dp on first run so the Reality public key
+// (which clients pin) does not change
+let keep
+if (fs.existsSync(KEEP)) {
+  keep = readJson(KEEP)
+} else {
+  const cfg = readJson(CFG)
+  const dp = readJson(DP).dp
+  const realIn = cfg.inbounds.find((i) => i.tag === 'reality-in')
+  const hy2In = cfg.inbounds.find((i) => i.tag === 'hy2-in')
+  keep = {
+    rpriv: realIn.tls.reality.private_key,
+    rpub: dp.find((d) => d.t === 'reality').pbk,
+    hy2obfs: hy2In.obfs.password
+  }
+  writeJson(KEEP, keep)
+  chmodGrp(KEEP, 'sing-box')
+}
+
+let prev = fs.existsSync(STATE) ? readJson(STATE) : null
+// first run (no state): seed the grace slot from the currently-advertised generation so the
+// pre-existing credentials keep working through the first rotation too
+if (!prev) {
+  try {
+    const dpNow = readJson(DP).dp
+    const r = dpNow.find((d) => d.t === 'reality')
+    const h = dpNow.find((d) => d.t === 'hy2')
+    if (r && h) prev = { uuid: r.uuid, sid: r.sid, pw: h.pw }
+  } catch {}
+}
+const gen = {
+  uuid: crypto.randomUUID(),
+  sid: crypto.randomBytes(8).toString('hex'),
+  pw: crypto.randomBytes(16).toString('hex')
+}
+
+const uuids = [gen.uuid, ...(prev ? [prev.uuid] : [])]
+const sids = [gen.sid, ...(prev ? [prev.sid] : [])]
+const pws = [gen.pw, ...(prev ? [prev.pw] : [])]
+
+const config = {
+  log: { level: 'warn' },
+  inbounds: [
+    {
+      type: 'vless',
+      tag: 'reality-in',
+      listen: '::',
+      listen_port: 443,
+      users: uuids.map((u) => ({ uuid: u, flow: 'xtls-rprx-vision' })),
+      tls: {
+        enabled: true,
+        server_name: SNI,
+        reality: {
+          enabled: true,
+          handshake: { server: SNI, server_port: 443 },
+          private_key: keep.rpriv,
+          short_id: sids
+        }
+      }
+    },
+    {
+      type: 'hysteria2',
+      tag: 'hy2-in',
+      listen: '::',
+      listen_port: 443,
+      users: pws.map((p) => ({ password: p })),
+      obfs: { type: 'salamander', password: keep.hy2obfs },
+      tls: {
+        enabled: true,
+        alpn: ['h3'],
+        certificate_path: `${DIR}/hy2.crt`,
+        key_path: `${DIR}/hy2.key`
+      }
+    }
+  ],
+  outbounds: [
+    { type: 'direct', tag: 'direct' },
+    { type: 'block', tag: 'block' }
+  ],
+  route: { rules: [{ ip_is_private: true, outbound: 'block' }], final: 'direct' }
+}
+
+// hy2 is advertised with its pinned self-signed cert (carried to clients over the Nostr channel,
+// which has no size limit) instead of `insecure`; the cert is stable across rotations.
+const hy2ca = fs.readFileSync(HY2_CRT, 'utf8').trim()
+const dpValue = {
+  dp: [
+    {
+      t: 'reality',
+      host: EXIT_IP,
+      port: 443,
+      uuid: gen.uuid,
+      pbk: keep.rpub,
+      sni: SNI,
+      sid: gen.sid,
+      fp: 'chrome'
+    },
+    { t: 'hy2', host: EXIT_IP, port: 443, pw: gen.pw, obfs: keep.hy2obfs, sni: HY2_SNI, ca: hy2ca }
+  ]
+}
+
+rotateTransaction({
+  configFile: CFG,
+  config: JSON.stringify(config, null, 2),
+  metadata: [
+    { file: STATE, data: JSON.stringify(gen, null, 2) },
+    { file: DP, data: JSON.stringify(dpValue, null, 2) }
+  ],
+  journal,
+  write,
+  restart,
+  validate: (file) => execFileSync('sing-box', ['check', '-c', file])
+})
+console.log(new Date().toISOString(), 'data-plane generation rotated with rollback journal')

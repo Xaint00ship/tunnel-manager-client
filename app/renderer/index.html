@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>magnetgate</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="mg-app" data-state="idle">
+      <header class="mg-titlebar">
+        <span class="mg-brand"><span class="mg-mark" aria-hidden="true">m/</span>magnetgate</span
+        ><span id="windowStatus">Загрузка настроек…</span>
+      </header>
+      <div class="mg-layout">
+        <nav class="mg-sidebar" aria-label="Разделы приложения">
+          <button class="mg-nav" data-page="connection" aria-current="page">Подключение</button>
+          <button class="mg-nav" data-page="sites">Сайты</button>
+          <button class="mg-nav" data-page="settings">Настройки</button>
+          <div class="mg-sidebar-foot">
+            <button class="mg-nav" data-page="diagnostics">Диагностика</button>
+            <p class="mg-version">Tunnel Manager для macOS</p>
+          </div>
+        </nav>
+        <main class="mg-main">
+          <div id="globalError" class="mg-note mg-error" role="alert" hidden>
+            <p id="errorSummary"></p>
+            <details>
+              <summary>Подробности ошибки</summary>
+              <p id="errorDetail"></p>
+            </details>
+            <button class="mg-link" data-go="diagnostics">Открыть диагностику</button>
+          </div>
+          <section data-view="connection" aria-labelledby="headingConnection">
+            <div class="mg-page-heading">
+              <h2 id="headingConnection">Подключение</h2>
+              <span class="mg-caption" id="activeMode"></span>
+            </div>
+            <div class="mg-status">
+              <div aria-live="polite">
+                <div class="mg-status-title">
+                  <span class="mg-dot" aria-hidden="true"></span><span id="phase">Загрузка…</span>
+                </div>
+                <p class="mg-caption" id="statusDetail"></p>
+              </div>
+              <button class="mg-action" id="btnConnect" disabled>Подключить</button>
+            </div>
+            <div class="mg-progress" id="progress" aria-hidden="true" hidden><span></span></div>
+            <div id="tunWarn" class="mg-note" hidden></div>
+            <div class="mg-server">
+              <div class="mg-server-name">
+                <div>
+                  <p id="serverName">Сервер не настроен</p>
+                  <p class="mg-caption">Транспорт выбирается автоматически</p>
+                </div>
+              </div>
+              <div class="mg-ip">
+                <p id="proxyIp">—</p>
+                <p class="mg-caption">Адрес через VPN</p>
+              </div>
+            </div>
+            <div class="mg-mode-title">
+              <h3>Что направлять через VPN</h3>
+              <span class="mg-caption" id="modeMsg" aria-live="polite"></span>
+            </div>
+            <div class="mg-mode-options" aria-label="Режим VPN">
+              <button class="mg-mode" id="btnModeFull" data-mode="full" aria-pressed="true">
+                <span>Весь интернет</span><span class="mg-radio" aria-hidden="true"></span
+                ><small id="fullDescription">Кроме сайтов в исключениях</small>
+              </button>
+              <button class="mg-mode" id="btnModeSplit" data-mode="split" aria-pressed="false">
+                <span>Только выбранное</span><span class="mg-radio" aria-hidden="true"></span
+                ><small>Остальные сайты — напрямую</small>
+              </button>
+            </div>
+            <div class="mg-rules-preview" id="countryRow" hidden>
+              <div>
+                <h3>Страна выхода</h3>
+                <p class="mg-caption" id="countryMsg"></p>
+              </div>
+              <select id="country" class="mg-country-select" aria-label="Страна выхода"></select>
+            </div>
+            <div class="mg-rules-preview">
+              <div>
+                <h3 id="previewTitle">Исключения из VPN</h3>
+                <p class="mg-caption" id="previewSites"></p>
+              </div>
+              <button class="mg-link" id="btnEditSites">Настроить сайты</button>
+            </div>
+            <div class="mg-bottom">
+              <span id="protection"></span
+              ><button class="mg-link" data-go="diagnostics">Диагностика соединения</button>
+            </div>
+            <p class="mg-caption mg-traffic" id="traffic" hidden></p>
+          </section>
+          <section data-view="sites" aria-labelledby="headingSites" hidden>
+            <div class="mg-page-heading">
+              <h2 id="headingSites">Сайты</h2>
+              <span class="mg-caption">Ваши правила</span>
+            </div>
+            <p class="mg-caption">Два независимых списка для двух режимов работы.</p>
+            <div class="mg-subtabs" aria-label="Выбор списка">
+              <button class="mg-subtab" data-list="directDomains" aria-pressed="true">
+                Напрямую</button
+              ><button class="mg-subtab" data-list="tunnelDomains" aria-pressed="false">
+                Через VPN
+              </button>
+            </div>
+            <p id="listHint" class="mg-caption"></p>
+            <p id="listWarning" class="mg-note" hidden>
+              Прямые исключения не действуют при строгой защите. Список сохранится, но трафик пойдёт
+              через VPN.
+            </p>
+            <div class="mg-form">
+              <label for="domain"
+                >Адрес сайта<input
+                  id="domain"
+                  placeholder="example.com"
+                  autocomplete="off"
+                  spellcheck="false"
+                  aria-describedby="siteMessage" /></label
+              ><button class="mg-action" id="btnAddSite">Добавить</button>
+            </div>
+            <p id="siteMessage" class="mg-flash" role="status"></p>
+            <div id="siteList" class="mg-list"></div>
+            <p class="mg-caption mg-space" id="builtInNote">
+              Изменения сохраняются автоматически.
+            </p>
+          </section>
+          <section data-view="settings" aria-labelledby="headingSettings" hidden>
+            <div class="mg-page-heading">
+              <h2 id="headingSettings">Настройки</h2>
+              <span class="mg-caption">Подключение и защита</span>
+            </div>
+            <div class="mg-setting">
+              <div class="mg-setting-row">
+                <div>
+                  <h3><label for="killSwitch">Блокировать интернет при обрыве VPN</label></h3>
+                  <p class="mg-caption">Строгая защита для режима «Весь интернет»</p>
+                </div>
+                <input id="killSwitch" class="mg-toggle" type="checkbox" />
+              </div>
+              <p id="guardNote" class="mg-note" hidden>
+                Прямые исключения отключаются. Закрытие приложения не снимает блокировку; для
+                восстановления интернета нажмите «Отключить» на экране подключения.
+              </p>
+            </div>
+            <details id="serverSettings" class="mg-setting">
+              <summary>Серверы и ключи доступа</summary>
+              <div id="exits" class="mg-exits"></div>
+              <div class="mg-actions">
+                <button class="mg-secondary" id="btnAddExit">Добавить сервер</button
+                ><button class="mg-action" id="btnSaveServers">Сохранить серверы</button>
+              </div>
+              <p id="serversMessage" class="mg-flash" role="status"></p>
+            </details>
+            <details class="mg-setting">
+              <summary>Дополнительные параметры</summary>
+              <div class="mg-fields">
+                <label for="localPort"
+                  >Локальный SOCKS-порт<input
+                    id="localPort"
+                    type="number"
+                    min="1024"
+                    max="65535"
+                    required /></label
+                ><label for="singboxPort"
+                  >SOCKS-порт sing-box<input
+                    id="singboxPort"
+                    type="number"
+                    min="1024"
+                    max="65535"
+                    required /></label
+                ><label for="probePort"
+                  >Порт проверки соединения<input
+                    id="probePort"
+                    type="number"
+                    min="1024"
+                    max="65535"
+                    required
+                /></label>
+              </div>
+              <label for="bootstrap"
+                >Узлы обнаружения · по одному host:port на строку<textarea
+                  id="bootstrap"
+                  spellcheck="false"
+                  rows="4"
+                ></textarea>
+              </label>
+              <label for="directProcesses"
+                >Не через туннель — программы · по одному имени процесса или пути на строку
+                (например qbittorrent)<textarea
+                  id="directProcesses"
+                  spellcheck="false"
+                  rows="3"
+                ></textarea>
+              </label>
+              <label for="slots"
+                >Слоты нод · через запятую (пусто — не искать; 0,1 — искать обе ноды)<input
+                  id="slots"
+                  inputmode="numeric"
+                  placeholder="0, 1"
+                /></label>
+              <div class="mg-actions">
+                <button class="mg-action" id="btnSaveAdvanced">Сохранить параметры</button
+                ><button class="mg-secondary" id="btnOpenDir">Папка настроек</button>
+              </div>
+              <p id="advancedMessage" class="mg-flash" role="status"></p>
+            </details>
+            <p class="mg-caption mg-space">
+              Ключи и дополнительные параметры применяются только после сохранения.
+            </p>
+          </section>
+          <section data-view="diagnostics" aria-labelledby="headingDiagnostics" hidden>
+            <div class="mg-page-heading">
+              <h2 id="headingDiagnostics">Диагностика</h2>
+              <button class="mg-secondary" id="btnRefresh">Обновить</button>
+            </div>
+            <p class="mg-caption">
+              Состояние обновляется автоматически. Технические подробности собраны здесь.
+            </p>
+            <div class="mg-list">
+              <div class="mg-list-row">
+                <span>Обнаружение сервера</span><span id="diagDiscovery">—</span>
+              </div>
+              <div class="mg-list-row"><span>Туннель</span><span id="diagTunnel">—</span></div>
+              <div class="mg-list-row">
+                <span>Интернет через VPN</span><span id="diagHealth">—</span>
+              </div>
+              <div class="mg-list-row">
+                <span>Применённый режим</span><span id="diagMode">—</span>
+              </div>
+              <div class="mg-list-row">
+                <span>Системный IP</span><span id="diagSystem" class="mg-domain">—</span>
+              </div>
+              <div class="mg-list-row">
+                <span>IP через VPN</span><span id="diagProxy" class="mg-domain">—</span>
+              </div>
+              <div class="mg-list-row">
+                <span>Строгая защита</span><span id="diagGuard">—</span>
+              </div>
+              <div class="mg-list-row">
+                <span>Канал данных</span><span id="diagPlanes">—</span>
+              </div>
+            </div>
+            <div class="mg-country-block" id="nodesBlock" hidden>
+              <h3>Ноды</h3>
+              <p class="mg-caption">
+                Что видно через рандеву и какие каналы сейчас в паузе после сбоев.
+              </p>
+              <div class="mg-list" id="nodes"></div>
+            </div>
+            <details class="mg-space">
+              <summary>Журнал событий</summary>
+              <p id="logPath" class="mg-caption mg-path"></p>
+              <div id="log" class="mg-log" role="log" aria-live="off"></div>
+              <button class="mg-secondary" id="btnLogs">Открыть папку журналов</button>
+              <button class="mg-secondary" id="btnClearLog">Очистить журнал</button>
+            </details>
+            <p class="mg-flash" id="diagMessage" role="status"></p>
+          </section>
+        </main>
+      </div>
+    </div>
+    <script src="state.js"></script>
+    <script src="renderer.js"></script>
+  </body>
+</html>
