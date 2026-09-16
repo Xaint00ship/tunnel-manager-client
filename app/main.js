@@ -10,7 +10,11 @@ const { buildVpnConfig } = require('./vpn-config.cjs')
 const { switchMode, engineSignature } = require('./mode.cjs')
 const { rotatingLog } = require('./log.cjs')
 const { accumulate, rate } = require('./stats.cjs')
-const { summarize: summarizeCountries, select: selectCountry } = require('./countries.cjs')
+const {
+  summarize: summarizeCountries,
+  summarizeNodes,
+  select: selectCountry
+} = require('./countries.cjs')
 if (process.env.MAGNETGATE_APP_TEST_DIR)
   app.setPath('userData', process.env.MAGNETGATE_APP_TEST_DIR)
 const PLATFORM = process.platform || 'win32'
@@ -71,6 +75,7 @@ const state = {
   trafficProtected: false,
   stats: { conns: 0, up: 0, down: 0, upTotal: 0, downTotal: 0, upBps: 0, downBps: 0, planes: [] },
   countries: [],
+  nodes: [],
   country: '',
   countryFallback: false
 }
@@ -383,6 +388,7 @@ async function applyVpn() {
     state.vpnHealthy = false
     state.route = null
     state.countries = []
+    state.nodes = []
     state.countryFallback = false
     lastSig = null
     pushStatus()
@@ -393,6 +399,7 @@ async function applyVpn() {
   // endpoint's address still bypasses the TUN (the client's own uplinks must never be captured).
   const selection = selectCountry(dp, cfg.country)
   state.countries = selection.available
+  state.nodes = summarizeNodes(dp)
   state.country = cfg.country
   state.countryFallback = selection.fallback
   const chosen = selection.endpoints
