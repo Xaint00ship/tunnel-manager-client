@@ -1,19 +1,36 @@
 const { spawn } = require('node:child_process')
+const crypto = require('node:crypto')
 const { EventEmitter } = require('node:events')
 const fs = require('node:fs')
 const fsp = require('node:fs/promises')
+const net = require('node:net')
 const os = require('node:os')
 const path = require('node:path')
 const { PassThrough } = require('node:stream')
+
+const HELPER_VERSION = '1'
+const HELPER_LABEL = 'org.magnetgate.privileged-helper'
+const HELPER_PLIST = `/Library/LaunchDaemons/${HELPER_LABEL}.plist`
+const HELPER_SOCKET = '/private/var/run/magnetgate/helper.sock'
+const DEFAULT_TIMEOUT_MS = 7000
+
+let helperReady = null
 
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`
 }
 
 function appleScriptString(value) {
-  // The generated shell snippets use single-quote shell escaping, so the AppleScript string only
-  // needs double-quote/backslash/newline escaping.
   return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`
+}
+
+function xmlEscape(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
 }
 
 function runAdmin(command, { spawnProcess = spawn } = {}) {
@@ -36,8 +53,13 @@ function runAdmin(command, { spawnProcess = spawn } = {}) {
   })
 }
 
+function configFromArgs(args) {
+  const index = args.indexOf('-c')
+  return index >= 0 ? args[index + 1] : null
+}
+
 function runtimeFiles(args) {
-  const config = args[args.indexOf('-c') + 1]
+  const config = configFromArgs(args)
   const dir = config ? path.dirname(config) : os.tmpdir()
   const base = config ? path.basename(config) : `magnetgate-vpn-${process.pid}.json`
   return {
@@ -46,38 +68,195 @@ function runtimeFiles(args) {
   }
 }
 
-function buildStartCommand(exe, args, options = {}) {
-  const { pidFile, logFile } = runtimeFiles(args)
-  const cwd = options.cwd || process.cwd()
+function helperFiles(args) {
+  const config = configFromArgs(args)
+  const logDir = config ? path.dirname(config) : os.tmpdir()
+  const userData = config ? path.dirname(logDir) : os.tmpdir()
   return {
-    pidFile,
-    logFile,
-    command: [
-      `cd ${shellQuote(cwd)}`,
-      `rm -f ${shellQuote(pidFile)} ${shellQuote(logFile)}`,
-      `(${[
-        "trap '' HUP;",
-        shellQuote(exe),
-        ...args.map(shellQuote),
-        '</dev/null',
-        `>${shellQuote(logFile)}`,
-        '2>&1',
-        '&',
-        `echo $! > ${shellQuote(pidFile)}`
-      ].join(' ')})`,
-      `chmod 644 ${shellQuote(pidFile)} ${shellQuote(logFile)} 2>/dev/null || true`
-    ].join(' && ')
+    tokenFile: path.join(userData, 'mac-helper.token'),
+    helperLogFile: path.join(logDir, 'mac-helper.log'),
+    socketPath: HELPER_SOCKET
   }
 }
 
-function buildStopCommand(pid) {
-  const quoted = shellQuote(String(pid))
+function helperScriptPath(base = __dirname) {
+  const packed = path.join(base, 'mac-helper-daemon.cjs')
+  return packed.includes(`${path.sep}app.asar${path.sep}`)
+    ? packed.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`)
+    : packed
+}
+
+function buildLaunchDaemonPlist({
+  execPath = process.execPath,
+  scriptPath = helperScriptPath(),
+  socketPath = HELPER_SOCKET,
+  tokenFile,
+  helperLogFile
+}) {
+  const args = [
+    execPath,
+    scriptPath,
+    '--daemon',
+    '--socket',
+    socketPath,
+    '--token-file',
+    tokenFile,
+    '--log-file',
+    helperLogFile
+  ]
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${xmlEscape(HELPER_LABEL)}</string>
+  <key>ProgramArguments</key>
+  <array>
+${args.map((arg) => `    <string>${xmlEscape(arg)}</string>`).join('\n')}
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ELECTRON_RUN_AS_NODE</key>
+    <string>1</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${xmlEscape(helperLogFile)}</string>
+  <key>StandardErrorPath</key>
+  <string>${xmlEscape(helperLogFile)}</string>
+</dict>
+</plist>
+`
+}
+
+function buildInstallCommand(tempPlist, { socketPath = HELPER_SOCKET } = {}) {
   return [
-    `kill -TERM ${quoted} 2>/dev/null || true`,
-    'i=0',
-    `while kill -0 ${quoted} 2>/dev/null && [ "$i" -lt 50 ]; do i=$((i + 1)); sleep 0.1; done`,
-    `if kill -0 ${quoted} 2>/dev/null; then kill -KILL ${quoted} 2>/dev/null || true; fi`
-  ].join('; ')
+    `install -d -m 755 ${shellQuote(path.dirname(socketPath))}`,
+    `cp ${shellQuote(tempPlist)} ${shellQuote(HELPER_PLIST)}`,
+    `chown root:wheel ${shellQuote(HELPER_PLIST)}`,
+    `chmod 644 ${shellQuote(HELPER_PLIST)}`,
+    `{ launchctl bootout system ${shellQuote(HELPER_PLIST)} >/dev/null 2>&1 || true; }`,
+    `launchctl bootstrap system ${shellQuote(HELPER_PLIST)}`,
+    `launchctl kickstart -k system/${shellQuote(HELPER_LABEL)}`
+  ].join(' && ')
+}
+
+async function ensureToken(tokenFile, { randomBytes = crypto.randomBytes } = {}) {
+  try {
+    return (await fsp.readFile(tokenFile, 'utf8')).trim()
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err
+  }
+  await fsp.mkdir(path.dirname(tokenFile), { recursive: true })
+  const token = randomBytes(32).toString('hex')
+  try {
+    await fsp.writeFile(tokenFile, token + '\n', { mode: 0o600, flag: 'wx' })
+    return token
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err
+    return (await fsp.readFile(tokenFile, 'utf8')).trim()
+  }
+}
+
+function requestHelper(payload, { socketPath = HELPER_SOCKET, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  return new Promise((resolve, reject) => {
+    const client = net.connect(socketPath)
+    let buffer = '',
+      done = false
+    const finish = (err, value) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      client.destroy()
+      err ? reject(err) : resolve(value)
+    }
+    const timer = setTimeout(() => finish(new Error('privileged helper timeout')), timeoutMs)
+    client.once('error', (err) => finish(err))
+    client.on('data', (chunk) => {
+      buffer += chunk
+      const index = buffer.indexOf('\n')
+      if (index < 0) return
+      try {
+        const response = JSON.parse(buffer.slice(0, index))
+        if (response.ok) finish(null, response)
+        else finish(new Error(response.error || 'privileged helper failed'))
+      } catch (err) {
+        finish(err)
+      }
+    })
+    client.once('connect', () => client.write(JSON.stringify(payload) + '\n'))
+  })
+}
+
+async function installHelper(args, deps = {}) {
+  const { tokenFile, helperLogFile, socketPath } = helperFiles(args)
+  const token = await ensureToken(tokenFile, deps)
+  const scriptPath = deps.scriptPath || helperScriptPath(deps.baseDir || __dirname)
+  const execPath = deps.execPath || process.execPath
+  const tempPlist = path.join(path.dirname(tokenFile), `${HELPER_LABEL}.plist`)
+  await fsp.mkdir(path.dirname(helperLogFile), { recursive: true })
+  await fsp.writeFile(
+    tempPlist,
+    buildLaunchDaemonPlist({ execPath, scriptPath, socketPath, tokenFile, helperLogFile }),
+    { mode: 0o600 }
+  )
+  await (deps.runAdmin || runAdmin)(buildInstallCommand(tempPlist, { socketPath }))
+  return { token, tokenFile, helperLogFile, socketPath, scriptPath, execPath }
+}
+
+async function delay(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function pingHelper(context, deps = {}) {
+  const request = deps.requestHelper || requestHelper
+  const response = await request(
+    { op: 'ping', token: context.token },
+    { socketPath: context.socketPath, timeoutMs: 1500 }
+  )
+  if (response.version !== HELPER_VERSION) throw new Error('privileged helper version mismatch')
+  return response
+}
+
+async function ensureHelper(args, deps = {}) {
+  const { tokenFile, helperLogFile, socketPath } = helperFiles(args)
+  const token = await ensureToken(tokenFile, deps)
+  const context = {
+    token,
+    tokenFile,
+    helperLogFile,
+    socketPath,
+    scriptPath: deps.scriptPath || helperScriptPath(deps.baseDir || __dirname),
+    execPath: deps.execPath || process.execPath
+  }
+  try {
+    await pingHelper(context, deps)
+    return context
+  } catch {}
+  const installed = await installHelper(args, deps)
+  let last
+  for (let i = 0; i < 20; i++) {
+    try {
+      await pingHelper(installed, deps)
+      return installed
+    } catch (err) {
+      last = err
+      await delay(250)
+    }
+  }
+  throw new Error(`privileged helper did not start: ${last?.message || 'unknown error'}`)
+}
+
+function helperOnce(args, deps = {}) {
+  if (!helperReady)
+    helperReady = ensureHelper(args, deps).catch((err) => {
+      helperReady = null
+      throw err
+    })
+  return helperReady
 }
 
 function pidExists(pid, { kill = process.kill } = {}) {
@@ -126,30 +305,38 @@ function spawnMacPrivileged(exe, args, options = {}, deps = {}) {
   child.exitCode = null
   child.signalCode = null
   child.killed = false
-  const run = deps.runAdmin || runAdmin
-  const readFile = deps.readFile || fsp.readFile
+  const request = deps.requestHelper || requestHelper
   const exists = deps.pidExists || pidExists
-  const { command, pidFile, logFile } = buildStartCommand(exe, args, options)
 
-  child.kill = (signal = 'SIGTERM') => {
+  child.kill = () => {
     child.killed = true
     if (!child.rootPid) return false
-    void stopMacPrivileged(child, { runAdmin: run, signal }).catch((err) => child.emit('error', err))
+    void stopMacPrivileged(child, deps).catch((err) => child.emit('error', err))
     return true
   }
 
   queueMicrotask(async () => {
     try {
-      await run(command)
-      const text = await readFile(pidFile, 'utf8')
-      const pid = Number(text.trim())
+      const context = await (deps.ensureHelper || helperOnce)(args, deps)
+      const response = await request(
+        {
+          op: 'start',
+          token: context.token,
+          exe,
+          args,
+          cwd: options.cwd || process.cwd()
+        },
+        { socketPath: context.socketPath, timeoutMs: DEFAULT_TIMEOUT_MS }
+      )
+      const pid = Number(response.pid)
       if (!Number.isInteger(pid) || pid <= 0) throw new Error('Privileged VPN process did not report a PID')
       child.pid = pid
       child.rootPid = pid
-      child.pidFile = pidFile
-      child.logFile = logFile
+      child.pidFile = response.pidFile
+      child.logFile = response.logFile
+      child.helperContext = context
       child.stderr.write(`Started privileged VPN process ${pid}\n`)
-      watchLog(child, logFile, deps)
+      watchLog(child, response.logFile, deps)
       const timer = setInterval(() => {
         if (child.exitCode !== null || child.signalCode !== null) return clearInterval(timer)
         if (!exists(pid)) {
@@ -168,7 +355,7 @@ function spawnMacPrivileged(exe, args, options = {}, deps = {}) {
   return child
 }
 
-async function stopMacPrivileged(child, { runAdmin: run = runAdmin } = {}) {
+async function stopMacPrivileged(child, deps = {}) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return
   child.killed = true
   const pid = child.rootPid || child.pid
@@ -176,15 +363,31 @@ async function stopMacPrivileged(child, { runAdmin: run = runAdmin } = {}) {
     finishChild(child, 0)
     return
   }
-  await run(buildStopCommand(pid))
+  const context =
+    child.helperContext ||
+    (await (deps.ensureHelper || helperOnce)(['run', '-c', child.configPath || child.pidFile || ''], deps))
+  await (deps.requestHelper || requestHelper)(
+    { op: 'stop', token: context.token, pid },
+    { socketPath: context.socketPath, timeoutMs: DEFAULT_TIMEOUT_MS }
+  )
   finishChild(child, 0, 'SIGTERM')
 }
 
 module.exports = {
+  HELPER_LABEL,
+  HELPER_PLIST,
+  HELPER_SOCKET,
+  HELPER_VERSION,
   spawnMacPrivileged,
   stopMacPrivileged,
   shellQuote,
-  buildStartCommand,
-  buildStopCommand,
-  pidExists
+  appleScriptString,
+  buildInstallCommand,
+  buildLaunchDaemonPlist,
+  ensureHelper,
+  helperFiles,
+  helperScriptPath,
+  pidExists,
+  requestHelper,
+  runtimeFiles
 }
