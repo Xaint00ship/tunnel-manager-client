@@ -1,7 +1,7 @@
 {
   "name": "tunnel-manager-client-macos",
   "productName": "Tunnel Manager Client",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "macOS desktop fork of the magnetgate censorship-resistant tunnel client",
   "author": "Tunnel Manager",
   "private": true,

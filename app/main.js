@@ -6,6 +6,7 @@ const crypto = require('node:crypto')
 const net = require('node:net')
 const http = require('node:http')
 const { EngineController, command, stopChild } = require('./engine.cjs')
+const { spawnMacPrivileged, stopMacPrivileged } = require('./mac-privileged.cjs')
 const { buildVpnConfig } = require('./vpn-config.cjs')
 const { switchMode, engineSignature } = require('./mode.cjs')
 const { rotatingLog } = require('./log.cjs')
@@ -222,6 +223,7 @@ const engine = new EngineController({
   cwd: SB_DIR,
   configPath: path.join(LOG_DIR, 'vpn-config.json'),
   log: (line) => pushLog('[vpn] ' + line),
+  ...(IS_MAC ? { spawnChild: spawnMacPrivileged, terminate: stopMacPrivileged } : {}),
   onExit: (err) => {
     modeAbort?.abort()
     invalidateHealth()
